@@ -38,6 +38,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
+import { deleteProject, getProjects, makeProject, parseImport, putProject, type LocalProject } from './storage'
 import './styles.css'
 
 type NodeKind = 'rect' | 'ellipse' | 'text' | 'image'
@@ -82,7 +83,7 @@ type Action =
   | null
 
 const board = { width: 1440, height: 900 }
-const storageKey = 'canvasly-personal-file-v1'
+const legacyStorageKey = 'canvasly-personal-file-v1'
 
 const initialNodes: DesignNode[] = [
   { id: 'nav-logo', type: 'text', name: 'COVE logo', x: 68, y: 55, width: 115, height: 32, fill: 'transparent', text: 'COVE', fontSize: 25, fontWeight: 800, color: '#1C1C1A', description: 'Brand wordmark' },
@@ -126,7 +127,7 @@ function cloneNodes(nodes: DesignNode[]) {
 
 function loadNodes() {
   try {
-    const saved = window.localStorage.getItem(storageKey)
+    const saved = window.localStorage.getItem(legacyStorageKey)
     if (saved) {
       const parsed = JSON.parse(saved) as DesignNode[]
       if (Array.isArray(parsed) && parsed.length > 0) return parsed
@@ -149,8 +150,13 @@ function Avatar({ initials, color, small = false }: { initials: string; color: s
   return <span className={`avatar ${small ? 'avatar--small' : ''}`} style={{ background: color }}>{initials}</span>
 }
 
+type InstallPromptEvent = Event & {
+  prompt: () => Promise<void>
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
+}
+
 function App() {
-  const [nodes, setNodes] = useState<DesignNode[]>(loadNodes)
+  const [nodes, setNodes] = useState<DesignNode[]>(initialNodes)
   const nodesRef = useRef(nodes)
   const historyRef = useRef<DesignNode[][]>([cloneNodes(nodes)])
   const historyIndexRef = useRef(0)
@@ -166,7 +172,16 @@ function App() {
   const [comments, setComments] = useState<Comment[]>(defaultComments)
   const [commentText, setCommentText] = useState('')
   const [toast, setToast] = useState('')
+  const [projects, setProjects] = useState<LocalProject[]>([])
+  const [activeProjectId, setActiveProjectId] = useState('')
+  const [fileName, setFileName] = useState('Cove Studio Landing Page')
+  const [storageReady, setStorageReady] = useState(false)
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false)
+  const [mobilePanel, setMobilePanel] = useState<'layers' | 'inspector' | null>(null)
+  const [isOnline, setIsOnline] = useState(navigator.onLine)
+  const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   const selected = nodes.find((node) => node.id === selectedId)
 
@@ -202,14 +217,134 @@ function App() {
     setToast('Redid last change')
   }
 
-  const saveDraft = () => {
-    window.localStorage.setItem(storageKey, JSON.stringify(nodesRef.current))
-    setToast('Saved locally')
+  const saveDraft = async (quiet = false) => {
+    if (!activeProjectId) return
+    const existing = projects.find((project) => project.id === activeProjectId)
+    const project: LocalProject = {
+      id: activeProjectId,
+      name: fileName.trim() || 'Untitled project',
+      nodes: cloneNodes(nodesRef.current),
+      createdAt: existing?.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
+    }
+    try {
+      await putProject(project)
+      setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)].sort((a, b) => b.updatedAt - a.updatedAt))
+      if (!quiet) setToast('Saved to this device')
+    } catch {
+      if (!quiet) setToast('Could not save this project')
+    }
+  }
+
+  const openProject = (project: LocalProject) => {
+    const projectNodes = project.nodes as DesignNode[]
+    replaceNodes(cloneNodes(projectNodes.length ? projectNodes : initialNodes))
+    historyRef.current = [cloneNodes(projectNodes.length ? projectNodes : initialNodes)]
+    historyIndexRef.current = 0
+    setSelectedId('')
+    setActiveProjectId(project.id)
+    setFileName(project.name)
+    setProjectMenuOpen(false)
+    setMobilePanel(null)
+    setToast(`Opened ${project.name}`)
+  }
+
+  const createProject = async () => {
+    const count = projects.length + 1
+    const project = makeProject(`Untitled project ${count}`, cloneNodes(initialNodes))
+    try {
+      await putProject(project)
+      setProjects((current) => [project, ...current])
+      openProject(project)
+      setProjectMenuOpen(false)
+      setToast('Created a local project')
+    } catch {
+      setToast('Could not create a project')
+    }
+  }
+
+  const importProjects = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const imported = parseImport(JSON.parse(await file.text()))
+      await Promise.all(imported.map((project) => putProject(project)))
+      const freshProjects = await getProjects()
+      setProjects(freshProjects)
+      openProject(imported[0])
+      setProjectMenuOpen(false)
+      setToast(`Imported ${imported.length} project${imported.length === 1 ? '' : 's'}`)
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'Import failed')
+    } finally {
+      event.target.value = ''
+    }
   }
 
   useEffect(() => {
-    window.localStorage.setItem(storageKey, JSON.stringify(nodes))
-  }, [nodes])
+    const bootWorkspace = async () => {
+      try {
+        let localProjects = await getProjects()
+        if (localProjects.length === 0) {
+          const migratedNodes = loadNodes()
+          const starter = makeProject('Cove Studio Landing Page', cloneNodes(migratedNodes))
+          await putProject(starter)
+          localProjects = [starter]
+        }
+        setProjects(localProjects)
+        const first = localProjects[0]
+        const firstNodes = first.nodes as DesignNode[]
+        replaceNodes(cloneNodes(firstNodes.length ? firstNodes : initialNodes))
+        historyRef.current = [cloneNodes(firstNodes.length ? firstNodes : initialNodes)]
+        historyIndexRef.current = 0
+        setActiveProjectId(first.id)
+        setFileName(first.name)
+      } catch {
+        setToast('Local project storage is unavailable in this browser')
+      } finally {
+        setStorageReady(true)
+      }
+    }
+    void bootWorkspace()
+  // The workspace should hydrate exactly once when the app opens.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!storageReady || !activeProjectId) return
+    const timer = window.setTimeout(() => { void saveDraft(true) }, 650)
+    return () => window.clearTimeout(timer)
+  // Save documents after a short pause instead of on every drag frame.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, fileName, activeProjectId, storageReady])
+
+  useEffect(() => {
+    const updateNetwork = () => setIsOnline(navigator.onLine)
+    const captureInstall = (event: Event) => {
+      event.preventDefault()
+      setInstallPrompt(event as InstallPromptEvent)
+    }
+    window.addEventListener('online', updateNetwork)
+    window.addEventListener('offline', updateNetwork)
+    window.addEventListener('beforeinstallprompt', captureInstall)
+    return () => {
+      window.removeEventListener('online', updateNetwork)
+      window.removeEventListener('offline', updateNetwork)
+      window.removeEventListener('beforeinstallprompt', captureInstall)
+    }
+  }, [])
+
+  const installApp = async () => {
+    if (!installPrompt) {
+      const isAppleMobile = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      setToast(isAppleMobile ? 'In Safari: Share → Add to Home Screen' : 'Use your browser menu to install Canvasly')
+      return
+    }
+    await installPrompt.prompt()
+    const choice = await installPrompt.userChoice
+    if (choice.outcome === 'accepted') setToast('Canvasly was installed')
+    setInstallPrompt(null)
+  }
 
   useEffect(() => {
     if (!toast) return
@@ -373,9 +508,60 @@ function App() {
   }
 
   const exportJson = () => {
-    download(JSON.stringify({ name: 'Cove Studio Landing Page', version: 1, canvas: board, nodes: nodesRef.current }, null, 2), 'application/json', 'cove-studio.design.json')
+    download(JSON.stringify({ name: fileName, version: 1, canvas: board, nodes: nodesRef.current }, null, 2), 'application/json', `${fileName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'canvasly-design'}.design.json`)
     setShowExport(false)
     setToast('Design JSON exported')
+  }
+
+  const exportBackup = async () => {
+    const currentProject = projects.find((project) => project.id === activeProjectId)
+    const activeProject: LocalProject | null = activeProjectId ? {
+      id: activeProjectId,
+      name: fileName.trim() || 'Untitled project',
+      nodes: cloneNodes(nodesRef.current),
+      createdAt: currentProject?.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
+    } : null
+    try {
+      if (activeProject) await putProject(activeProject)
+      const backup = {
+        format: 'canvasly-backup' as const,
+        version: 1 as const,
+        exportedAt: new Date().toISOString(),
+        projects: activeProject ? [activeProject, ...projects.filter((project) => project.id !== activeProject.id)] : projects,
+      }
+      download(JSON.stringify(backup, null, 2), 'application/json', `canvasly-backup-${new Date().toISOString().slice(0, 10)}.json`)
+      setShowExport(false)
+      setToast('Offline backup exported')
+    } catch {
+      setToast('Could not create a backup')
+    }
+  }
+
+  const deleteActiveProject = async () => {
+    if (!activeProjectId || projects.length < 2) {
+      setToast('Keep at least one local project')
+      return
+    }
+    const removedName = fileName
+    try {
+      await deleteProject(activeProjectId)
+      const remaining = projects.filter((project) => project.id !== activeProjectId)
+      setProjects(remaining)
+      openProject(remaining[0])
+      setToast(`Deleted ${removedName}`)
+    } catch {
+      setToast('Could not delete this project')
+    }
+  }
+
+  const renameProject = () => {
+    const nextName = window.prompt('Name this local project', fileName)?.trim()
+    if (nextName) {
+      setFileName(nextName)
+      setProjectMenuOpen(false)
+      setToast('Project renamed')
+    }
   }
 
   const exportSvg = () => {
@@ -445,11 +631,18 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="file-control">
-          <button className="brand-mark" aria-label="Canvasly home"><span /><span /><span /></button>
+          <button className="brand-mark" aria-label="Open your local projects" onClick={() => setProjectMenuOpen((open) => !open)}><span /><span /><span /></button>
           <div className="file-name-wrap">
-            <button className="file-name">Cove Studio Landing Page <ChevronDown size={14} /></button>
-            <div className="file-meta"><Cloud size={13} /> Saved to this device</div>
+            <button className="file-name" onClick={() => setProjectMenuOpen((open) => !open)}>{fileName} <ChevronDown size={14} /></button>
+            <div className="file-meta"><Cloud size={13} /> {isOnline ? 'Saved on this device' : 'Offline — saved on this device'}</div>
+            {projectMenuOpen && <div className="popover project-popover">
+              <div className="popover-title">LOCAL PROJECTS <span>{projects.length}</span></div>
+              <div className="project-list">{projects.map((project) => <button className={`project-item ${project.id === activeProjectId ? 'is-current' : ''}`} key={project.id} onClick={() => openProject(project)}><span className="project-thumb"><LayoutGrid size={14} /></span><span><b>{project.name}</b><small>{project.nodes.length} layers · stored offline</small></span>{project.id === activeProjectId && <Check size={15} />}</button>)}</div>
+              <div className="project-actions"><button onClick={() => { void createProject() }}><Plus size={15} /> New project</button><button onClick={() => importInputRef.current?.click()}><Download size={15} /> Import</button></div>
+              <div className="project-utility"><button onClick={() => { void installApp() }}>Install app</button><button onClick={renameProject}>Rename</button><button onClick={() => { void deleteActiveProject() }}>Delete</button></div>
+            </div>}
           </div>
+          <input ref={importInputRef} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => { void importProjects(event) }} />
         </div>
 
         <div className="toolbar" aria-label="Tools">
@@ -469,12 +662,14 @@ function App() {
             <Avatar initials="JD" color="#A4D6FF" small />
             <button className="more-collaborators">+2</button>
           </div>
+          {installPrompt && <button className="install-button" onClick={() => { void installApp() }}><Download size={14} /> Install</button>}
           <div className="export-wrap">
             <button className="top-text-button" onClick={() => { setShowExport((value) => !value); setShowShare(false) }}>Export <ChevronDown size={14} /></button>
             {showExport && <div className="popover export-popover">
               <div className="popover-title">Export design</div>
               <button onClick={exportSvg}><ImageIcon size={16} /><span><b>SVG</b><small>Vector artwork</small></span><ArrowUpRight size={15} /></button>
               <button onClick={exportJson}><Code2 size={16} /><span><b>Design JSON</b><small>Editable document data</small></span><ArrowUpRight size={15} /></button>
+              <button onClick={() => { void exportBackup() }}><Cloud size={16} /><span><b>Offline backup</b><small>Every local project</small></span><ArrowUpRight size={15} /></button>
             </div>}
           </div>
           <div className="share-wrap">
@@ -491,7 +686,8 @@ function App() {
       </header>
 
       <section className="workspace">
-        <aside className="left-panel">
+        {mobilePanel && <button className="mobile-panel-scrim" aria-label="Close panel" onClick={() => setMobilePanel(null)} />}
+        <aside className={`left-panel ${mobilePanel === 'layers' ? 'is-mobile-open' : ''}`}>
           <div className="panel-tabs">
             <button className={leftTab === 'layers' ? 'is-active' : ''} onClick={() => setLeftTab('layers')}><Layers3 size={15} /> Layers</button>
             <button className={leftTab === 'assets' ? 'is-active' : ''} onClick={() => setLeftTab('assets')}><LayoutGrid size={15} /> Assets</button>
@@ -544,7 +740,7 @@ function App() {
           <div className="canvas-footer">{selected ? <><span className="selection-status"><span /> {selected.name}</span><span>{Math.round(selected.x)}, {Math.round(selected.y)}</span></> : <span>Canvasly personal edition</span>}</div>
         </section>
 
-        <aside className="right-panel">
+        <aside className={`right-panel ${mobilePanel === 'inspector' ? 'is-mobile-open' : ''}`}>
           <div className="inspector-tabs">
             {(['design', 'prototype', 'inspect'] as InspectorTab[]).map((tab) => <button key={tab} className={inspectorTab === tab ? 'is-active' : ''} onClick={() => setInspectorTab(tab)}>{tab}</button>)}
           </div>
@@ -582,11 +778,15 @@ function App() {
             {selected && <><div className="code-preview">{`${selected.type === 'text' ? 'color' : 'background'}: ${selected.type === 'text' ? selected.color : selected.fill};`}<br />{`width: ${selected.width}px;`}<br />{`height: ${selected.height}px;`}</div><button onClick={() => { navigator.clipboard?.writeText(`width: ${selected.width}px; height: ${selected.height}px;`); setToast('CSS copied') }}><Copy size={14} /> Copy CSS</button></>}
           </div>}
         </aside>
+        <div className="responsive-panel-actions">
+          <button className={mobilePanel === 'layers' ? 'is-active' : ''} onClick={() => setMobilePanel((panel) => panel === 'layers' ? null : 'layers')}><Layers3 size={15} /> Layers</button>
+          <button className={mobilePanel === 'inspector' ? 'is-active' : ''} onClick={() => setMobilePanel((panel) => panel === 'inspector' ? null : 'inspector')}><MoreHorizontal size={16} /> Edit</button>
+        </div>
       </section>
       <footer className="bottom-bar">
         <div><button onClick={undo} disabled={historyIndexRef.current === 0}><Undo2 size={15} /> Undo</button><button onClick={redo} disabled={historyIndexRef.current >= historyRef.current.length - 1}><Redo2 size={15} /> Redo</button></div>
-        <div className="bottom-center"><span className="sync-dot" /> All changes saved locally</div>
-        <div><button onClick={() => setInspectorTab('prototype')}><MessageCircle size={15} /> {comments.filter((item) => !item.resolved).length}</button><button onClick={saveDraft}><Cloud size={15} /> Save</button></div>
+        <div className="bottom-center"><span className={`sync-dot ${isOnline ? '' : 'is-offline'}`} /> {isOnline ? 'Autosaved offline' : 'Offline — local projects ready'}</div>
+        <div><button onClick={() => setInspectorTab('prototype')}><MessageCircle size={15} /> {comments.filter((item) => !item.resolved).length}</button><button onClick={() => { void saveDraft() }}><Cloud size={15} /> Save</button></div>
       </footer>
       {toast && <div className="toast"><Check size={15} /> {toast}<button onClick={() => setToast('')} aria-label="Dismiss"><X size={14} /></button></div>}
     </main>
@@ -606,3 +806,13 @@ function EmptyInspector() {
 }
 
 createRoot(document.getElementById('root')!).render(<App />)
+
+// The service worker is intentionally registered after the UI mounts. It keeps the
+// application shell available when there is no network, while project data lives in IndexedDB.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    void navigator.serviceWorker.register('/sw.js').catch(() => {
+      // The editor still works online if a browser or local development server blocks service workers.
+    })
+  })
+}
