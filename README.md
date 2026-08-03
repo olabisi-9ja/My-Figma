@@ -35,6 +35,16 @@ npm run build
 npm run preview
 ```
 
+## Deploy to Cloudflare Workers
+
+This repo includes a `wrangler.jsonc` that deploys the `dist/` build as static assets on a Cloudflare Worker (`my-figma`), with single-page-app fallback for unmatched routes. No Worker script is needed — it is a pure static deployment.
+
+```bash
+npm run deploy        # builds, then runs `wrangler deploy`
+```
+
+Requires `CLOUDFLARE_API_TOKEN` (and optionally `CLOUDFLARE_ACCOUNT_ID`) in the environment, or `wrangler login` locally.
+
 ## Install it as an app
 
 A PWA must be served over **HTTPS** in regular use (localhost is allowed for development). Deploy the `dist/` folder from `npm run build` to Cloudflare Pages, Netlify, Vercel, or any HTTPS static host.
