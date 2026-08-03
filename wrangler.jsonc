@@ -1,0 +1,12 @@
+{
+  // Cloudflare Workers configuration for Canvasly.
+  // The app is a static SPA: `npm run build` emits `dist/`, which is deployed
+  // as Worker static assets. No Worker script (`main`) is required.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "my-figma",
+  "compatibility_date": "2026-08-03",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}
