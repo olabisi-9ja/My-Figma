@@ -1,0 +1,27 @@
+{
+  "id": "/",
+  "name": "Canvasly — Personal Design Workspace",
+  "short_name": "Canvasly",
+  "description": "An offline-first personal canvas for design, comments, and quick exports.",
+  "lang": "en",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#efeeeb",
+  "theme_color": "#1d1d1b",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
