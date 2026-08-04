@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
+  AlertTriangle,
   ArrowUpRight,
+  Camera,
   Check,
   ChevronDown,
   ChevronRight,
@@ -11,34 +13,74 @@ import {
   Copy,
   Download,
   Eye,
+  EyeOff,
   Frame,
   Hand,
   Image as ImageIcon,
+  KeyRound,
   Layers3,
   LayoutGrid,
+  Lightbulb,
   Link2,
+  Loader2,
   LockKeyhole,
   MessageCircle,
   Monitor,
   MoreHorizontal,
   MousePointer2,
+  Palette,
   PenTool,
   Play,
   Plus,
+  Puzzle,
   Redo2,
   Search,
+  Settings2,
   Share2,
+  Sparkles,
   Square,
   Star,
   TextCursorInput,
   Trash2,
   Undo2,
+  User,
   Users,
+  Wand2,
   X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
 import { deleteProject, getProjects, makeProject, parseImport, putProject, type LocalProject } from './storage'
+import {
+  AiError,
+  PROVIDERS,
+  aiConfigured,
+  buildDesignSummary,
+  clearAiSettings,
+  generateWireframe,
+  loadAiSettings,
+  providerMeta,
+  reviewDesign,
+  saveAiSettings,
+  suggestCopy,
+  testAiConnection,
+  type AiSettings,
+  type WireframeNode,
+} from './ai'
+import { Tour } from './tour'
+import { HelpModal } from './help'
+import {
+  DEFAULT_PROFILE,
+  PROFILE_COLORS,
+  composeSkillInstructions,
+  initialsFromName,
+  loadProfile,
+  loadSkills,
+  saveProfile,
+  saveSkills,
+  type AiSkill,
+  type Profile,
+} from './personalize'
 import './styles.css'
 
 type NodeKind = 'rect' | 'ellipse' | 'text' | 'image'
@@ -180,6 +222,22 @@ function App() {
   const [mobilePanel, setMobilePanel] = useState<'layers' | 'inspector' | null>(null)
   const [isOnline, setIsOnline] = useState(navigator.onLine)
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null)
+  const [aiSettings, setAiSettings] = useState<AiSettings>(() => loadAiSettings())
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiSetupOpen, setAiSetupOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [tourOpen, setTourOpen] = useState(false)
+  const [aiBusy, setAiBusy] = useState<'' | 'wireframe' | 'review' | 'copy'>('')
+  const [aiIssue, setAiIssue] = useState<{ message: string; hint?: string } | null>(null)
+  const [wireframePrompt, setWireframePrompt] = useState('')
+  const [pendingWireframe, setPendingWireframe] = useState<WireframeNode[] | null>(null)
+  const [reviewResult, setReviewResult] = useState('')
+  const [copyOptions, setCopyOptions] = useState<string[] | null>(null)
+  const [skills, setSkills] = useState<AiSkill[]>(() => loadSkills())
+  const [profile, setProfile] = useState<Profile>(() => loadProfile())
+  const [skillsOpen, setSkillsOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const tourCheckedRef = useRef(false)
   const canvasRef = useRef<HTMLDivElement>(null)
   const importInputRef = useRef<HTMLInputElement>(null)
 
@@ -319,6 +377,28 @@ function App() {
   }, [nodes, fileName, activeProjectId, storageReady])
 
   useEffect(() => {
+    if (!storageReady || tourCheckedRef.current) return
+    tourCheckedRef.current = true
+    if (!window.localStorage.getItem('canvasly-tour-completed')) {
+      // Small pause so the panels are laid out before the tour highlights them.
+      const timer = window.setTimeout(() => setTourOpen(true), 500)
+      return () => window.clearTimeout(timer)
+    }
+  // The first-run tour check should happen exactly once, after hydration.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageReady])
+
+  const finishTour = () => {
+    setTourOpen(false)
+    window.localStorage.setItem('canvasly-tour-completed', '1')
+  }
+
+  const startTour = () => {
+    setHelpOpen(false)
+    setTourOpen(true)
+  }
+
+  useEffect(() => {
     const updateNetwork = () => setIsOnline(navigator.onLine)
     const captureInstall = (event: Event) => {
       event.preventDefault()
@@ -385,6 +465,9 @@ function App() {
         setActiveTool('select')
         setShowExport(false)
         setShowShare(false)
+        setAiOpen(false)
+        setAiSetupOpen(false)
+        setHelpOpen(false)
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -576,12 +659,186 @@ function App() {
     setToast('SVG exported')
   }
 
+  const exportPng = () => {
+    const scale = 2
+    const canvas = document.createElement('canvas')
+    canvas.width = board.width * scale
+    canvas.height = board.height * scale
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      setToast('PNG export is not supported in this browser')
+      return
+    }
+    ctx.scale(scale, scale)
+    ctx.fillStyle = '#FCFAF8'
+    ctx.fillRect(0, 0, board.width, board.height)
+    for (const node of nodesRef.current) {
+      ctx.globalAlpha = node.opacity ?? 1
+      if (node.type === 'text') {
+        ctx.fillStyle = node.color ?? '#1C1C1A'
+        ctx.font = `${node.fontWeight ?? 400} ${node.fontSize ?? 16}px Inter, Arial, sans-serif`
+        ctx.textBaseline = 'top'
+        const lineHeight = (node.fontSize ?? 16) * 1.2
+        ;(node.text ?? '').split('\n').forEach((line, index) => ctx.fillText(line, node.x, node.y + index * lineHeight))
+      } else if (node.type === 'ellipse') {
+        if (node.fill !== 'transparent') {
+          ctx.fillStyle = node.fill
+          ctx.beginPath()
+          ctx.ellipse(node.x + node.width / 2, node.y + node.height / 2, Math.max(1, node.width / 2), Math.max(1, node.height / 2), 0, 0, Math.PI * 2)
+          ctx.fill()
+        }
+      } else if (node.fill !== 'transparent') {
+        ctx.fillStyle = node.fill
+        ctx.beginPath()
+        const radius = Math.min(node.radius ?? 0, node.width / 2, node.height / 2)
+        if (typeof ctx.roundRect === 'function') ctx.roundRect(node.x, node.y, node.width, node.height, radius)
+        else ctx.rect(node.x, node.y, node.width, node.height)
+        ctx.fill()
+      }
+      ctx.globalAlpha = 1
+    }
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        setToast('Could not create the PNG')
+        return
+      }
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(blob)
+      link.download = `${fileName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'canvasly-design'}.png`
+      link.click()
+      window.setTimeout(() => URL.revokeObjectURL(link.href), 800)
+      setShowExport(false)
+      setToast('PNG exported')
+    }, 'image/png')
+  }
+
+  const exportTokens = () => {
+    const colors = new Map<string, number>()
+    const textStyles: { name: string; fontSize: number; fontWeight: number; color: string }[] = []
+    for (const node of nodesRef.current) {
+      const swatch = node.type === 'text' ? node.color : node.fill
+      if (swatch && swatch !== 'transparent') colors.set(swatch.toUpperCase(), (colors.get(swatch.toUpperCase()) ?? 0) + 1)
+      if (node.type === 'text') textStyles.push({ name: node.name, fontSize: node.fontSize ?? 16, fontWeight: node.fontWeight ?? 400, color: node.color ?? '#1C1C1A' })
+    }
+    const palette = [...colors.entries()].sort((a, b) => b[1] - a[1]).map(([value, uses], index) => ({ name: `color-${index + 1}`, value, uses }))
+    const slug = fileName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'canvasly-design'
+    download(JSON.stringify({ format: 'canvasly-tokens', version: 1, project: fileName, exportedAt: new Date().toISOString(), colors: palette, textStyles }, null, 2), 'application/json', `${slug}-tokens.json`)
+    setShowExport(false)
+    setToast('Design tokens exported')
+  }
+
   const addComment = () => {
     const message = commentText.trim()
     if (!message) return
-    setComments((current) => [{ id: `comment-${Date.now()}`, author: 'You', initials: 'YO', color: '#c7f162', message, time: 'now', nodeId: selectedId || undefined }, ...current])
+    setComments((current) => [{ id: `comment-${Date.now()}`, author: profile.name, initials: initialsFromName(profile.name), color: profile.color, message, time: 'now', nodeId: selectedId || undefined }, ...current])
     setCommentText('')
     setToast('Comment added')
+  }
+
+  const changeSkills = (next: AiSkill[]) => {
+    setSkills(next)
+    saveSkills(next)
+  }
+
+  const changeProfile = (next: Profile) => {
+    setProfile(next)
+    saveProfile(next)
+    setProfileOpen(false)
+    setToast(`Workspace is now ${next.name === 'You' ? 'yours' : `${next.name}'s`}`)
+  }
+
+  const handleAiError = (error: unknown) => {
+    if (error instanceof AiError) setAiIssue({ message: error.message, hint: error.hint })
+    else setAiIssue({ message: 'Something went wrong while calling the AI.', hint: 'Check your connection and AI settings, then try again.' })
+  }
+
+  const runWireframe = async () => {
+    const prompt = wireframePrompt.trim()
+    if (!prompt || aiBusy) return
+    setAiBusy('wireframe')
+    setAiIssue(null)
+    setPendingWireframe(null)
+    try {
+      setPendingWireframe(await generateWireframe(aiSettings, prompt, composeSkillInstructions(skills)))
+    } catch (error) {
+      handleAiError(error)
+    } finally {
+      setAiBusy('')
+    }
+  }
+
+  const addWireframeToCanvas = () => {
+    if (!pendingWireframe?.length) return
+    const stamp = Date.now()
+    const current = nodesRef.current
+    const maxY = current.reduce((max, node) => Math.max(max, node.y + node.height), 0)
+    const startY = maxY + 90
+    const startX = 80
+    const generated: DesignNode[] = pendingWireframe.map((node, index) => ({
+      id: `ai-${stamp}-${index}`,
+      type: node.type,
+      name: node.name ? `AI / ${node.name}` : `AI / ${node.type} ${index + 1}`,
+      x: startX + node.x,
+      y: startY + node.y,
+      width: node.width,
+      height: node.height,
+      fill: node.fill ?? 'transparent',
+      radius: node.radius,
+      text: node.text,
+      fontSize: node.fontSize,
+      fontWeight: node.fontWeight,
+      color: node.color,
+    }))
+    replaceNodes([...current, ...generated], true)
+    setSelectedId(generated[0]?.id ?? '')
+    setPendingWireframe(null)
+    setWireframePrompt('')
+    setAiOpen(false)
+    setPan({ x: Math.round(105 - startX * zoom), y: Math.round(90 - startY * zoom) })
+    setToast(`Added ${generated.length} AI layers below your design`)
+  }
+
+  const runReview = async () => {
+    if (aiBusy) return
+    setAiBusy('review')
+    setAiIssue(null)
+    setReviewResult('')
+    try {
+      setReviewResult(await reviewDesign(aiSettings, buildDesignSummary(nodesRef.current), composeSkillInstructions(skills)))
+    } catch (error) {
+      handleAiError(error)
+    } finally {
+      setAiBusy('')
+    }
+  }
+
+  const runCopySuggestions = async () => {
+    if (aiBusy || !selected || selected.type !== 'text') return
+    setAiBusy('copy')
+    setAiIssue(null)
+    setCopyOptions(null)
+    try {
+      setCopyOptions(await suggestCopy(aiSettings, selected.text ?? '', selected.name, composeSkillInstructions(skills)))
+    } catch (error) {
+      handleAiError(error)
+    } finally {
+      setAiBusy('')
+    }
+  }
+
+  const applyCopyOption = (option: string) => {
+    if (!selected) return
+    updateNode(selected.id, { text: option })
+    setCopyOptions(null)
+    setToast('Copy updated on the canvas')
+  }
+
+  const saveAiSettingsAndClose = (next: AiSettings) => {
+    saveAiSettings(next)
+    setAiSettings(next)
+    setAiSetupOpen(false)
+    setAiIssue(null)
+    setToast(next.apiKey.trim() ? 'AI is ready to use' : 'AI settings saved')
   }
 
   const renderNode = (node: DesignNode) => {
@@ -657,19 +914,27 @@ function App() {
 
         <div className="top-actions">
           <div className="collaborators" title="3 people have access">
-            <Avatar initials="YO" color="#C7F162" small />
+            <button className="avatar-button" title={`Your profile — ${profile.name}`} onClick={() => setProfileOpen(true)}>
+              <Avatar initials={initialsFromName(profile.name)} color={profile.color} small />
+            </button>
             <Avatar initials="MC" color="#E6B4F7" small />
             <Avatar initials="JD" color="#A4D6FF" small />
             <button className="more-collaborators">+2</button>
           </div>
           {installPrompt && <button className="install-button" onClick={() => { void installApp() }}><Download size={14} /> Install</button>}
+          <button className={`ai-button ${aiOpen ? 'is-open' : ''}`} title="Canvasly AI — bring your own key" onClick={() => { setAiOpen((value) => !value); setShowExport(false); setShowShare(false) }}>
+            <Sparkles size={14} /> AI
+          </button>
           <div className="export-wrap">
             <button className="top-text-button" onClick={() => { setShowExport((value) => !value); setShowShare(false) }}>Export <ChevronDown size={14} /></button>
             {showExport && <div className="popover export-popover">
               <div className="popover-title">Export design</div>
               <button onClick={exportSvg}><ImageIcon size={16} /><span><b>SVG</b><small>Vector artwork</small></span><ArrowUpRight size={15} /></button>
+              <button onClick={exportPng}><Camera size={16} /><span><b>PNG</b><small>2× resolution image</small></span><ArrowUpRight size={15} /></button>
               <button onClick={exportJson}><Code2 size={16} /><span><b>Design JSON</b><small>Editable document data</small></span><ArrowUpRight size={15} /></button>
+              <button onClick={exportTokens}><Palette size={16} /><span><b>Design tokens</b><small>Colors & text styles</small></span><ArrowUpRight size={15} /></button>
               <button onClick={() => { void exportBackup() }}><Cloud size={16} /><span><b>Offline backup</b><small>Every local project</small></span><ArrowUpRight size={15} /></button>
+              <p className="export-note">.fig and .sketch are proprietary formats only those apps can write. Import the SVG into Figma or Sketch instead.</p>
             </div>}
           </div>
           <div className="share-wrap">
@@ -682,6 +947,7 @@ function App() {
               <p><LockKeyhole size={13} /> Only invited people can access this file.</p>
             </div>}
           </div>
+          <IconButton label="Tips & help" active={helpOpen} onClick={() => setHelpOpen((value) => !value)}><Lightbulb size={16} /></IconButton>
         </div>
       </header>
 
@@ -788,6 +1054,45 @@ function App() {
         <div className="bottom-center"><span className={`sync-dot ${isOnline ? '' : 'is-offline'}`} /> {isOnline ? 'Autosaved offline' : 'Offline — local projects ready'}</div>
         <div><button onClick={() => setInspectorTab('prototype')}><MessageCircle size={15} /> {comments.filter((item) => !item.resolved).length}</button><button onClick={() => { void saveDraft() }}><Cloud size={15} /> Save</button></div>
       </footer>
+      {tourOpen && <Tour onClose={finishTour} />}
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} onReplayTour={startTour} />}
+      {aiOpen && <AiPanel
+        settings={aiSettings}
+        busy={aiBusy}
+        issue={aiIssue}
+        prompt={wireframePrompt}
+        onPromptChange={(value) => { setWireframePrompt(value); setAiIssue(null) }}
+        pending={pendingWireframe}
+        onGenerate={() => { void runWireframe() }}
+        onAddWireframe={addWireframeToCanvas}
+        onDiscard={() => setPendingWireframe(null)}
+        review={reviewResult}
+        onReview={() => { void runReview() }}
+        selectedText={selected?.type === 'text' ? selected.text ?? '' : null}
+        selectedName={selected?.type === 'text' ? selected.name : ''}
+        copyOptions={copyOptions}
+        onCopySuggestions={() => { void runCopySuggestions() }}
+        onApplyCopy={applyCopyOption}
+        onOpenSetup={() => setAiSetupOpen(true)}
+        activeSkills={skills.filter((skill) => skill.enabled).length}
+        onOpenSkills={() => setSkillsOpen(true)}
+        onClose={() => setAiOpen(false)}
+      />}
+      {aiSetupOpen && <AiSetupModal
+        initial={aiSettings}
+        onClose={() => setAiSetupOpen(false)}
+        onSave={saveAiSettingsAndClose}
+      />}
+      {skillsOpen && <SkillsModal
+        skills={skills}
+        onChange={changeSkills}
+        onClose={() => setSkillsOpen(false)}
+      />}
+      {profileOpen && <ProfileModal
+        profile={profile}
+        onSave={changeProfile}
+        onClose={() => setProfileOpen(false)}
+      />}
       {toast && <div className="toast"><Check size={15} /> {toast}<button onClick={() => setToast('')} aria-label="Dismiss"><X size={14} /></button></div>}
     </main>
   )
@@ -803,6 +1108,291 @@ function SectionLabel({ label, action }: { label: string; action?: ReactNode }) 
 
 function EmptyInspector() {
   return <div className="empty-inspector"><div className="empty-icon"><MousePointer2 size={20} /></div><h3>Select a layer</h3><p>Click anything on the canvas to edit its properties, sizing, and styling.</p></div>
+}
+
+type AiPanelProps = {
+  settings: AiSettings
+  busy: '' | 'wireframe' | 'review' | 'copy'
+  issue: { message: string; hint?: string } | null
+  prompt: string
+  onPromptChange: (value: string) => void
+  pending: WireframeNode[] | null
+  onGenerate: () => void
+  onAddWireframe: () => void
+  onDiscard: () => void
+  review: string
+  onReview: () => void
+  selectedText: string | null
+  selectedName: string
+  copyOptions: string[] | null
+  onCopySuggestions: () => void
+  onApplyCopy: (option: string) => void
+  onOpenSetup: () => void
+  activeSkills: number
+  onOpenSkills: () => void
+  onClose: () => void
+}
+
+function AiPanel(props: AiPanelProps) {
+  const configured = aiConfigured(props.settings)
+  const meta = providerMeta(props.settings.provider)
+  return (
+    <div className="modal-scrim" onClick={props.onClose}>
+      <div className="modal ai-modal" role="dialog" aria-label="Canvasly AI" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <h2><Sparkles size={17} /> Canvasly AI</h2>
+          <div className="modal-head-actions">
+            <button className="ai-chip" title="AI skills shape every answer" onClick={props.onOpenSkills}><Puzzle size={12} /> Skills{props.activeSkills > 0 ? ` · ${props.activeSkills} on` : ''}</button>
+            {configured && <button className="ai-chip" title="Change AI settings" onClick={props.onOpenSetup}><Settings2 size={12} /> {meta.label} · {props.settings.model.trim() || meta.defaultModel}</button>}
+            <button aria-label="Close AI panel" onClick={props.onClose}><X size={17} /></button>
+          </div>
+        </div>
+        <div className="modal-body">
+          {!configured ? <div className="ai-setup-hero">
+            <div className="ai-setup-icon"><KeyRound size={22} /></div>
+            <h3>Bring your own AI key (BYOK)</h3>
+            <p>Canvasly has no server and no subscription. Paste your own API key and the AI calls go straight from your browser to the provider you choose.</p>
+            <ul>
+              <li>OpenAI, Anthropic, Google Gemini, or any OpenAI-compatible endpoint</li>
+              <li>Your key is stored only in this browser — never anywhere else</li>
+              <li>Works with the canvas: wireframes land as editable layers</li>
+            </ul>
+            <button className="tour-primary" onClick={props.onOpenSetup}><Sparkles size={14} /> Set up AI</button>
+          </div> : <>
+            {props.issue && <div className="ai-error"><AlertTriangle size={15} /><div><b>{props.issue.message}</b>{props.issue.hint && <small>{props.issue.hint}</small>}</div></div>}
+
+            <section className="ai-section">
+              <div className="ai-section-head"><Wand2 size={15} /><h3>Wireframe from a prompt</h3></div>
+              <p>Describe a screen and Canvasly adds it below your design as editable layers.</p>
+              <textarea value={props.prompt} onChange={(event) => props.onPromptChange(event.target.value)} placeholder="e.g. Landing page for a coffee subscription app: nav, big hero, three benefits, pricing, footer" rows={2} disabled={props.busy === 'wireframe'} />
+              {props.pending ? <div className="ai-result">
+                <b>{props.pending.length} layers ready</b>
+                <span className="ai-result-names">{props.pending.slice(0, 6).map((node) => node.name ?? node.type).join(' · ')}{props.pending.length > 6 ? ' · …' : ''}</span>
+                <div className="ai-result-actions">
+                  <button className="tour-primary" onClick={props.onAddWireframe}><Plus size={14} /> Add to canvas</button>
+                  <button className="tour-secondary" onClick={props.onDiscard}>Discard</button>
+                </div>
+              </div> : <button className="tour-primary" disabled={props.busy === 'wireframe' || !props.prompt.trim()} onClick={props.onGenerate}>
+                {props.busy === 'wireframe' ? <><Loader2 size={14} className="spin" /> Generating…</> : <><Wand2 size={14} /> Generate wireframe</>}
+              </button>}
+            </section>
+
+            <section className="ai-section">
+              <div className="ai-section-head"><Eye size={15} /><h3>Review this design</h3></div>
+              <p>Get a plain-language explanation of the current screen plus three concrete improvements.</p>
+              {props.review && <div className="ai-answer">{props.review}</div>}
+              <button className="tour-secondary" disabled={props.busy === 'review'} onClick={props.onReview}>
+                {props.busy === 'review' ? <><Loader2 size={14} className="spin" /> Reviewing…</> : props.review ? 'Review again' : 'Explain & review'}
+              </button>
+            </section>
+
+            <section className="ai-section ai-section--last">
+              <div className="ai-section-head"><TextCursorInput size={15} /><h3>Improve selected copy</h3></div>
+              {props.selectedText === null ? <p className="ai-muted">Select a text layer on the canvas, then come back here for three rewritten versions.</p> : <>
+                <p className="ai-selected-copy">“{props.selectedText.replace(/\s+/g, ' ').slice(0, 120)}” — <i>{props.selectedName}</i></p>
+                {props.copyOptions && <div className="ai-copy-options">
+                  {props.copyOptions.map((option) => <button key={option} onClick={() => props.onApplyCopy(option)}>{option}</button>)}
+                </div>}
+                <button className="tour-secondary" disabled={props.busy === 'copy'} onClick={props.onCopySuggestions}>
+                  {props.busy === 'copy' ? <><Loader2 size={14} className="spin" /> Writing…</> : props.copyOptions ? 'Suggest again' : 'Suggest better copy'}
+                </button>
+              </>}
+            </section>
+          </>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AiSetupModal({ initial, onClose, onSave }: { initial: AiSettings; onClose: () => void; onSave: (settings: AiSettings) => void }) {
+  const [provider, setProvider] = useState(initial.provider)
+  const [apiKey, setApiKey] = useState(initial.apiKey)
+  const [model, setModel] = useState(initial.model)
+  const [baseUrl, setBaseUrl] = useState(initial.baseUrl)
+  const [showKey, setShowKey] = useState(false)
+  const [testState, setTestState] = useState<'' | 'busy' | 'ok' | 'fail'>('')
+  const [testMessage, setTestMessage] = useState('')
+  const meta = providerMeta(provider)
+
+  const draftSettings = (): AiSettings => ({ provider, apiKey, model, baseUrl })
+
+  const runTest = async () => {
+    if (!apiKey.trim()) {
+      setTestState('fail')
+      setTestMessage('Paste an API key first.')
+      return
+    }
+    setTestState('busy')
+    setTestMessage('')
+    try {
+      const reply = await testAiConnection(draftSettings())
+      setTestState('ok')
+      setTestMessage(`Connected — the model replied “${reply}”.`)
+    } catch (error) {
+      setTestState('fail')
+      setTestMessage(error instanceof AiError ? `${error.message}${error.hint ? ` ${error.hint}` : ''}` : 'Could not reach the provider.')
+    }
+  }
+
+  return (
+    <div className="modal-scrim" onClick={onClose}>
+      <div className="modal setup-modal" role="dialog" aria-label="AI settings" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <h2><KeyRound size={17} /> AI settings — bring your own key</h2>
+          <button aria-label="Close AI settings" onClick={onClose}><X size={17} /></button>
+        </div>
+        <div className="modal-body">
+          <div className="setup-providers">
+            {PROVIDERS.map((item) => (
+              <button key={item.id} className={`setup-provider ${provider === item.id ? 'is-active' : ''}`} onClick={() => { setProvider(item.id); setTestState('') }}>
+                <span /><b>{item.label}</b>
+              </button>
+            ))}
+          </div>
+          <label className="setup-field">
+            <span>API key</span>
+            <div className="setup-key-row">
+              <input type={showKey ? 'text' : 'password'} value={apiKey} placeholder={meta.keyHint} autoComplete="off" spellCheck={false} onChange={(event) => { setApiKey(event.target.value); setTestState('') }} />
+              <button type="button" aria-label={showKey ? 'Hide key' : 'Show key'} onClick={() => setShowKey((value) => !value)}>{showKey ? <EyeOff size={15} /> : <Eye size={15} />}</button>
+            </div>
+            <small>Get one at <a href={meta.keyUrl} target="_blank" rel="noreferrer">{meta.keyUrl.replace('https://', '')}</a></small>
+          </label>
+          <label className="setup-field">
+            <span>Model</span>
+            <input value={model} placeholder={meta.defaultModel} spellCheck={false} onChange={(event) => { setModel(event.target.value); setTestState('') }} />
+            <small>Leave empty to use the default ({meta.defaultModel}).</small>
+          </label>
+          {provider === 'compatible' && <label className="setup-field">
+            <span>Base URL</span>
+            <input value={baseUrl} placeholder="https://openrouter.ai/api/v1" spellCheck={false} onChange={(event) => { setBaseUrl(event.target.value); setTestState('') }} />
+            <small>For OpenRouter, local servers (LM Studio, Ollama), or any OpenAI-compatible API. The server must allow browser (CORS) requests.</small>
+          </label>}
+          <div className="setup-test">
+            <button className="tour-secondary" disabled={testState === 'busy'} onClick={() => { void runTest() }}>
+              {testState === 'busy' ? <><Loader2 size={14} className="spin" /> Testing…</> : 'Test connection'}
+            </button>
+            {testMessage && <p className={testState === 'ok' ? 'is-ok' : testState === 'fail' ? 'is-fail' : ''}>{testMessage}</p>}
+          </div>
+          <p className="setup-privacy"><LockKeyhole size={13} /> Stored only in this browser. Sent only to {meta.label === 'OpenAI-compatible (OpenRouter, local…)' ? 'the endpoint you configure' : meta.label} when you use an AI action.</p>
+        </div>
+        <div className="modal-foot">
+          {aiConfigured(initial) && <button className="setup-remove" onClick={() => { clearAiSettings(); onSave({ ...initial, apiKey: '' }) }}>Remove key</button>}
+          <div className="modal-foot-right">
+            <button className="tour-secondary" onClick={onClose}>Cancel</button>
+            <button className="tour-primary" onClick={() => onSave(draftSettings())}>Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SkillsModal({ skills, onChange, onClose }: { skills: AiSkill[]; onChange: (skills: AiSkill[]) => void; onClose: () => void }) {
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [name, setName] = useState('')
+  const [instructions, setInstructions] = useState('')
+
+  const toggle = (id: string) => onChange(skills.map((skill) => skill.id === id ? { ...skill, enabled: !skill.enabled } : skill))
+  const remove = (id: string) => {
+    onChange(skills.filter((skill) => skill.id !== id))
+    if (editingId === id) resetForm()
+  }
+  const resetForm = () => {
+    setEditingId(null)
+    setName('')
+    setInstructions('')
+  }
+  const editSkill = (skill: AiSkill) => {
+    setEditingId(skill.id)
+    setName(skill.name)
+    setInstructions(skill.instructions)
+  }
+  const submit = () => {
+    const trimmedName = name.trim()
+    const trimmedInstructions = instructions.trim()
+    if (!trimmedName || !trimmedInstructions) return
+    if (editingId) {
+      onChange(skills.map((skill) => skill.id === editingId ? { ...skill, name: trimmedName, instructions: trimmedInstructions } : skill))
+    } else {
+      onChange([...skills, { id: `skill-${Date.now()}`, name: trimmedName, description: 'Custom skill', instructions: trimmedInstructions, enabled: true }])
+    }
+    resetForm()
+  }
+
+  return (
+    <div className="modal-scrim" onClick={onClose}>
+      <div className="modal skills-modal" role="dialog" aria-label="AI skills" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <h2><Puzzle size={17} /> AI skills</h2>
+          <button aria-label="Close skills" onClick={onClose}><X size={17} /></button>
+        </div>
+        <div className="modal-body">
+          <p className="skills-intro">Skills are extra instructions added to every AI request, so answers match how <b>you</b> work. Turn on what you like, or write your own. They are saved on this device permanently.</p>
+          <div className="skills-list">
+            {skills.map((skill) => <div className={`skill-row ${skill.enabled ? 'is-on' : ''}`} key={skill.id}>
+              <div className="skill-text">
+                <b>{skill.name}</b>
+                <small>{skill.builtin ? skill.description : skill.instructions.slice(0, 110) + (skill.instructions.length > 110 ? '…' : '')}</small>
+              </div>
+              <div className="skill-actions">
+                {!skill.builtin && <button className="skill-edit" title="Edit skill" onClick={() => editSkill(skill)}><PenTool size={13} /></button>}
+                {!skill.builtin && <button className="skill-delete" title="Delete skill" onClick={() => remove(skill.id)}><Trash2 size={13} /></button>}
+                <button className={`switch ${skill.enabled ? 'is-on' : ''}`} role="switch" aria-checked={skill.enabled} aria-label={`Toggle ${skill.name}`} onClick={() => toggle(skill.id)}><span /></button>
+              </div>
+            </div>)}
+          </div>
+          <div className="skill-form">
+            <div className="ai-section-head"><Plus size={14} /><h3>{editingId ? 'Edit your skill' : 'Create your own skill'}</h3></div>
+            <input value={name} placeholder="Name — e.g. My brand voice" maxLength={60} onChange={(event) => setName(event.target.value)} />
+            <textarea value={instructions} rows={3} placeholder="Instructions — e.g. Always use dark buttons with white text, and a playful but professional tone." onChange={(event) => setInstructions(event.target.value)} />
+            <div className="skill-form-actions">
+              {editingId && <button className="tour-secondary" onClick={resetForm}>Cancel edit</button>}
+              <button className="tour-primary" disabled={!name.trim() || !instructions.trim()} onClick={submit}>{editingId ? 'Save changes' : 'Add skill'}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProfileModal({ profile, onSave, onClose }: { profile: Profile; onSave: (profile: Profile) => void; onClose: () => void }) {
+  const [name, setName] = useState(profile.name === DEFAULT_PROFILE.name ? '' : profile.name)
+  const [color, setColor] = useState(profile.color)
+  const previewName = name.trim() || DEFAULT_PROFILE.name
+  return (
+    <div className="modal-scrim" onClick={onClose}>
+      <div className="modal profile-modal" role="dialog" aria-label="Your profile" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <h2><User size={17} /> Make it yours</h2>
+          <button aria-label="Close profile" onClick={onClose}><X size={17} /></button>
+        </div>
+        <div className="modal-body">
+          <div className="profile-preview">
+            <Avatar initials={initialsFromName(previewName)} color={color} />
+            <div><b>{previewName}</b><small>Your name signs comments and personalizes the workspace. Saved on this device.</small></div>
+          </div>
+          <label className="setup-field">
+            <span>Your name</span>
+            <input value={name} placeholder="e.g. Olabisi" maxLength={40} onChange={(event) => setName(event.target.value)} />
+          </label>
+          <div className="setup-field">
+            <span>Your color</span>
+            <div className="profile-colors">
+              {PROFILE_COLORS.map((swatch) => <button key={swatch} className={`profile-color ${color === swatch ? 'is-active' : ''}`} style={{ background: swatch }} aria-label={`Choose color ${swatch}`} onClick={() => setColor(swatch)} />)}
+            </div>
+          </div>
+        </div>
+        <div className="modal-foot">
+          <div className="modal-foot-right">
+            <button className="tour-secondary" onClick={onClose}>Cancel</button>
+            <button className="tour-primary" onClick={() => onSave({ name: name.trim() || DEFAULT_PROFILE.name, color })}>Save profile</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 createRoot(document.getElementById('root')!).render(<App />)
