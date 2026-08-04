@@ -102,9 +102,11 @@ type DesignNode = {
   text?: string
   fontSize?: number
   fontWeight?: number
+  fontFamily?: string
   color?: string
   opacity?: number
   rotation?: number
+  shadow?: string
   description?: string
 }
 
@@ -203,6 +205,7 @@ function App() {
   const historyRef = useRef<DesignNode[][]>([cloneNodes(nodes)])
   const historyIndexRef = useRef(0)
   const [selectedId, setSelectedId] = useState<string>('hero-card')
+  const [editingTextId, setEditingTextId] = useState<string | null>(null)
   const [activeTool, setActiveTool] = useState<Tool>('select')
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('design')
   const [leftTab, setLeftTab] = useState<'layers' | 'assets'>('layers')
@@ -300,6 +303,7 @@ function App() {
     historyRef.current = [cloneNodes(projectNodes.length ? projectNodes : initialNodes)]
     historyIndexRef.current = 0
     setSelectedId('')
+    setEditingTextId(null)
     setActiveProjectId(project.id)
     setFileName(project.name)
     setProjectMenuOpen(false)
@@ -364,28 +368,21 @@ function App() {
       }
     }
     void bootWorkspace()
-  // The workspace should hydrate exactly once when the app opens.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     if (!storageReady || !activeProjectId) return
     const timer = window.setTimeout(() => { void saveDraft(true) }, 650)
     return () => window.clearTimeout(timer)
-  // Save documents after a short pause instead of on every drag frame.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, fileName, activeProjectId, storageReady])
 
   useEffect(() => {
     if (!storageReady || tourCheckedRef.current) return
     tourCheckedRef.current = true
     if (!window.localStorage.getItem('canvasly-tour-completed')) {
-      // Small pause so the panels are laid out before the tour highlights them.
       const timer = window.setTimeout(() => setTourOpen(true), 500)
       return () => window.clearTimeout(timer)
     }
-  // The first-run tour check should happen exactly once, after hydration.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageReady])
 
   const finishTour = () => {
@@ -435,8 +432,36 @@ function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+      if (editingTextId || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+
       const key = event.key.toLowerCase()
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        if (selected) updateNode(selected.id, { y: selected.y - (event.shiftKey ? 10 : 1) })
+        return
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        if (selected) updateNode(selected.id, { y: selected.y + (event.shiftKey ? 10 : 1) })
+        return
+      }
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault()
+        if (selected) updateNode(selected.id, { x: selected.x - (event.shiftKey ? 10 : 1) })
+        return
+      }
+      if (event.key === 'ArrowRight') {
+        event.preventDefault()
+        if (selected) updateNode(selected.id, { x: selected.x + (event.shiftKey ? 10 : 1) })
+        return
+      }
+      if (event.key === 'Enter' && selected?.type === 'text') {
+        event.preventDefault()
+        setEditingTextId(selected.id)
+        return
+      }
+
       if ((event.metaKey || event.ctrlKey) && key === 'z') {
         event.preventDefault()
         if (event.shiftKey) redo()
@@ -462,6 +487,7 @@ function App() {
       if (shortcutMap[key]) setActiveTool(shortcutMap[key])
       if (key === 'escape') {
         setSelectedId('')
+        setEditingTextId(null)
         setActiveTool('select')
         setShowExport(false)
         setShowShare(false)
@@ -472,9 +498,7 @@ function App() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  // `selected` is deliberately included so duplicate feels immediate on keyboard.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, selectedId])
+  }, [selected, selectedId, editingTextId])
 
   useEffect(() => {
     const onPointerMove = (event: PointerEvent) => {
@@ -523,6 +547,9 @@ function App() {
     const next: DesignNode = { id, type, name: `New ${type === 'rect' ? 'rectangle' : type}`, x, y, ...config }
     replaceNodes([...nodesRef.current, next], true)
     setSelectedId(id)
+    if (type === 'text') {
+      setEditingTextId(id)
+    }
     setActiveTool('select')
     setToast(`Added ${next.name}`)
   }
@@ -548,11 +575,15 @@ function App() {
       setToast('Leave a note in the comments panel')
     } else {
       setSelectedId('')
+      setEditingTextId(null)
     }
   }
 
   const startNodeDrag = (event: ReactPointerEvent<HTMLDivElement>, node: DesignNode) => {
     event.stopPropagation()
+    if (editingTextId && editingTextId !== node.id) {
+      setEditingTextId(null)
+    }
     if (activeTool === 'comment') {
       setSelectedId(node.id)
       setInspectorTab('prototype')
@@ -569,6 +600,7 @@ function App() {
     const copy: DesignNode = { ...selected, id, name: `${selected.name} copy`, x: selected.x + 24, y: selected.y + 24 }
     replaceNodes([...nodesRef.current, copy], true)
     setSelectedId(id)
+    if (copy.type === 'text') setEditingTextId(null)
     setToast('Duplicated layer')
   }
 
@@ -579,6 +611,7 @@ function App() {
     const index = current.findIndex((node) => node.id === selectedId)
     replaceNodes(current.filter((node) => node.id !== selectedId), true)
     setSelectedId(current[Math.max(0, index - 1)]?.id ?? '')
+    setEditingTextId(null)
     setToast('Layer deleted')
   }
 
@@ -650,11 +683,22 @@ function App() {
   const exportSvg = () => {
     const shape = (node: DesignNode) => {
       const opacity = node.opacity ?? 1
-      if (node.type === 'text') return `<text x="${node.x}" y="${node.y + (node.fontSize ?? 16)}" fill="${node.color ?? '#1C1C1A'}" font-family="Arial, sans-serif" font-size="${node.fontSize ?? 16}" font-weight="${node.fontWeight ?? 400}">${(node.text ?? '').split('\n').map((line, index) => `<tspan x="${node.x}" dy="${index === 0 ? 0 : (node.fontSize ?? 16) * 1.2}">${line.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</tspan>`).join('')}</text>`
-      if (node.type === 'ellipse') return `<ellipse cx="${node.x + node.width / 2}" cy="${node.y + node.height / 2}" rx="${node.width / 2}" ry="${node.height / 2}" fill="${node.fill}" opacity="${opacity}" />`
-      return `<rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="${node.radius ?? 0}" fill="${node.fill}" opacity="${opacity}" />`
+      const transform = node.rotation ? ` transform="rotate(${node.rotation} ${node.x + node.width / 2} ${node.y + node.height / 2})"` : ''
+      const strokeAttr = node.stroke ? ` stroke="${node.stroke}" stroke-width="${node.strokeWidth ?? 1}"` : ''
+      const filter = node.shadow ? ' filter="drop-shadow(0px 4px 6px rgba(0,0,0,0.2))"' : ''
+      const fontFam = node.fontFamily ? ` font-family="${node.fontFamily}, sans-serif"` : ' font-family="Arial, sans-serif"'
+
+      if (node.type === 'text') {
+        const lines = (node.text ?? '').split('\n')
+        const lh = (node.fontSize ?? 16) * 1.2
+        return `<text x="${node.x}" y="${node.y + (node.fontSize ?? 16)}"${fontFam} fill="${node.color ?? '#1C1C1A'}" font-size="${node.fontSize ?? 16}" font-weight="${node.fontWeight ?? 400}" opacity="${opacity}"${transform}${filter}>${lines.map((line, index) => `<tspan x="${node.x}" dy="${index === 0 ? 0 : lh}">${line.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</tspan>`).join('')}</text>`
+      }
+      if (node.type === 'ellipse') {
+        return `<ellipse cx="${node.x + node.width / 2}" cy="${node.y + node.height / 2}" rx="${node.width / 2}" ry="${node.height / 2}" fill="${node.fill}" opacity="${opacity}"${strokeAttr}${transform}${filter} />`
+      }
+      return `<rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="${node.radius ?? 0}" fill="${node.fill}" opacity="${opacity}"${strokeAttr}${transform}${filter} />`
     }
-    download(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${board.width} ${board.height}" width="${board.width}" height="${board.height}"><rect width="100%" height="100%" fill="#FCFAF8"/>${nodesRef.current.map(shape).join('')}</svg>`, 'image/svg+xml', 'cove-studio.svg')
+    download(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${board.width} ${board.height}" width="${board.width}" height="${board.height}"><rect width="100%" height="100%" fill="#FCFAF8"/>${nodesRef.current.map(shape).join('')}</svg>`, 'image/svg+xml', `${fileName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'canvasly-design'}.svg`)
     setShowExport(false)
     setToast('SVG exported')
   }
@@ -672,31 +716,68 @@ function App() {
     ctx.scale(scale, scale)
     ctx.fillStyle = '#FCFAF8'
     ctx.fillRect(0, 0, board.width, board.height)
+
     for (const node of nodesRef.current) {
+      ctx.save()
       ctx.globalAlpha = node.opacity ?? 1
+
+      const cx = node.x + node.width / 2
+      const cy = node.y + node.height / 2
+
+      if (node.rotation) {
+        ctx.translate(cx, cy)
+        ctx.rotate((node.rotation * Math.PI) / 180)
+        ctx.translate(-cx, -cy)
+      }
+
+      if (node.shadow) {
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.18)'
+        ctx.shadowBlur = 12
+        ctx.shadowOffsetY = 4
+      }
+
       if (node.type === 'text') {
         ctx.fillStyle = node.color ?? '#1C1C1A'
-        ctx.font = `${node.fontWeight ?? 400} ${node.fontSize ?? 16}px Inter, Arial, sans-serif`
+        ctx.font = `${node.fontWeight ?? 400} ${node.fontSize ?? 16}px ${node.fontFamily ?? 'Inter'}, Arial, sans-serif`
         ctx.textBaseline = 'top'
         const lineHeight = (node.fontSize ?? 16) * 1.2
-        ;(node.text ?? '').split('\n').forEach((line, index) => ctx.fillText(line, node.x, node.y + index * lineHeight))
+        ;(node.text ?? '').split('\n').forEach((line, index) => {
+          ctx.fillText(line, node.x, node.y + index * lineHeight)
+        })
       } else if (node.type === 'ellipse') {
         if (node.fill !== 'transparent') {
           ctx.fillStyle = node.fill
           ctx.beginPath()
-          ctx.ellipse(node.x + node.width / 2, node.y + node.height / 2, Math.max(1, node.width / 2), Math.max(1, node.height / 2), 0, 0, Math.PI * 2)
+          ctx.ellipse(cx, cy, Math.max(1, node.width / 2), Math.max(1, node.height / 2), 0, 0, Math.PI * 2)
           ctx.fill()
         }
-      } else if (node.fill !== 'transparent') {
-        ctx.fillStyle = node.fill
-        ctx.beginPath()
-        const radius = Math.min(node.radius ?? 0, node.width / 2, node.height / 2)
-        if (typeof ctx.roundRect === 'function') ctx.roundRect(node.x, node.y, node.width, node.height, radius)
-        else ctx.rect(node.x, node.y, node.width, node.height)
-        ctx.fill()
+        if (node.stroke) {
+          ctx.strokeStyle = node.stroke
+          ctx.lineWidth = node.strokeWidth ?? 1
+          ctx.stroke()
+        }
+      } else {
+        if (node.fill !== 'transparent') {
+          ctx.fillStyle = node.fill
+          ctx.beginPath()
+          const radius = Math.min(node.radius ?? 0, node.width / 2, node.height / 2)
+          if (typeof ctx.roundRect === 'function') ctx.roundRect(node.x, node.y, node.width, node.height, radius)
+          else ctx.rect(node.x, node.y, node.width, node.height)
+          ctx.fill()
+        }
+        if (node.stroke) {
+          ctx.strokeStyle = node.stroke
+          ctx.lineWidth = node.strokeWidth ?? 1
+          ctx.beginPath()
+          const radius = Math.min(node.radius ?? 0, node.width / 2, node.height / 2)
+          if (typeof ctx.roundRect === 'function') ctx.roundRect(node.x, node.y, node.width, node.height, radius)
+          else ctx.rect(node.x, node.y, node.width, node.height)
+          ctx.stroke()
+        }
       }
-      ctx.globalAlpha = 1
+      ctx.restore()
     }
+
     canvas.toBlob((blob) => {
       if (!blob) {
         setToast('Could not create the PNG')
@@ -843,6 +924,8 @@ function App() {
 
   const renderNode = (node: DesignNode) => {
     const isSelected = selectedId === node.id
+    const isEditing = editingTextId === node.id
+
     const style: CSSProperties = {
       left: node.x,
       top: node.y,
@@ -850,23 +933,89 @@ function App() {
       height: node.height,
       opacity: node.opacity ?? 1,
       transform: node.rotation ? `rotate(${node.rotation}deg)` : undefined,
-      zIndex: isSelected ? 40 : undefined,
+      boxShadow: node.shadow,
+      zIndex: isSelected || isEditing ? 40 : undefined,
     }
+
+    if (node.type === 'text') {
+      if (isEditing) {
+        return (
+          <textarea
+            key={node.id}
+            className="canvas-text-editor"
+            style={{
+              left: node.x,
+              top: node.y,
+              width: Math.max(node.width, 140),
+              height: Math.max(node.height, 44),
+              color: node.color ?? '#1C1C1A',
+              fontSize: node.fontSize ?? 16,
+              fontWeight: node.fontWeight ?? 400,
+              fontFamily: node.fontFamily ? `${node.fontFamily}, sans-serif` : 'Inter, Arial, sans-serif',
+              lineHeight: 1.1,
+              transform: node.rotation ? `rotate(${node.rotation}deg)` : undefined,
+            }}
+            value={node.text ?? ''}
+            onChange={(event) => updateNode(node.id, { text: event.target.value })}
+            onBlur={() => setEditingTextId(null)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setEditingTextId(null)
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                setEditingTextId(null)
+              }
+              event.stopPropagation()
+            }}
+            autoFocus
+            onPointerDown={(event) => event.stopPropagation()}
+          />
+        )
+      }
+
+      const textShared = {
+        className: `canvas-node canvas-node--text ${isSelected ? 'is-selected' : ''}`,
+        style: {
+          ...style,
+          color: node.color ?? '#1C1C1A',
+          fontSize: node.fontSize ?? 16,
+          fontWeight: node.fontWeight ?? 400,
+          fontFamily: node.fontFamily ? `${node.fontFamily}, sans-serif` : 'Inter, Arial, sans-serif',
+          lineHeight: 1.1,
+          textShadow: node.shadow ? '0 4px 12px rgba(0,0,0,0.2)' : undefined,
+          WebkitTextStroke: node.stroke ? `${node.strokeWidth ?? 1}px ${node.stroke}` : undefined,
+        },
+        onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => startNodeDrag(event, node),
+        onDoubleClick: (event: ReactPointerEvent<HTMLDivElement>) => {
+          event.stopPropagation()
+          setSelectedId(node.id)
+          setEditingTextId(node.id)
+        },
+        title: `${node.name} — Double-click to edit text`,
+      }
+
+      return (
+        <div key={node.id} {...textShared}>
+          {node.text}
+        </div>
+      )
+    }
+
     const shared = {
       className: `canvas-node canvas-node--${node.type} ${isSelected ? 'is-selected' : ''}`,
-      style,
+      style: {
+        ...style,
+        border: node.stroke ? `${node.strokeWidth ?? 1}px solid ${node.stroke}` : undefined,
+      },
       onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => startNodeDrag(event, node),
       title: node.name,
     }
-    if (node.type === 'text') {
-      return <div key={node.id} {...shared} style={{ ...style, color: node.color, fontSize: node.fontSize, fontWeight: node.fontWeight, lineHeight: 1.1 }}>{node.text}</div>
-    }
+
     if (node.type === 'ellipse') {
-      return <div key={node.id} {...shared} style={{ ...style, background: node.fill, border: node.stroke ? `${node.strokeWidth ?? 1}px solid ${node.stroke}` : undefined, borderRadius: '50%' }} />
+      return <div key={node.id} {...shared} style={{ ...shared.style, background: node.fill, borderRadius: '50%' }} />
     }
     if (node.type === 'image') {
       return (
-        <div key={node.id} {...shared} style={{ ...style, background: node.fill, borderRadius: node.radius }}>
+        <div key={node.id} {...shared} style={{ ...shared.style, background: node.fill, borderRadius: node.radius }}>
           <div className="image-noise" />
           <div className="image-ribbon image-ribbon--one" />
           <div className="image-ribbon image-ribbon--two" />
@@ -875,7 +1024,7 @@ function App() {
         </div>
       )
     }
-    return <div key={node.id} {...shared} style={{ ...style, background: node.fill, border: node.stroke ? `${node.strokeWidth ?? 1}px solid ${node.stroke}` : undefined, borderRadius: node.radius }} />
+    return <div key={node.id} {...shared} style={{ ...shared.style, background: node.fill, borderRadius: node.radius }} />
   }
 
   const layerGroups = [
@@ -883,6 +1032,14 @@ function App() {
     { title: 'Hero', ids: ['eyebrow', 'hero-title', 'hero-body', 'hero-button', 'hero-button-label', 'hero-card', 'hero-card-shape', 'hero-card-tag', 'hero-card-tag-text'] },
     { title: 'Selected work', ids: ['section-line', 'section-kicker', 'section-count'] },
   ]
+
+  const getToolClass = () => {
+    if (activeTool === 'hand') return 'tool-hand'
+    if (activeTool === 'text') return 'tool-text'
+    if (['rect', 'ellipse', 'frame', 'pen'].includes(activeTool)) return 'tool-crosshair'
+    if (activeTool === 'comment') return 'tool-comment'
+    return ''
+  }
 
   return (
     <main className="app-shell">
@@ -964,17 +1121,17 @@ function App() {
             <button className="page-row"><span className="page-dot" /> Explorations</button>
             <div className="layers-heading"><span>Layers</span><button aria-label="Search layers"><Search size={14} /></button></div>
             <div className="layer-list">
-              <button className={`layer-row layer-row--frame ${selectedId === 'frame-root' ? 'is-selected' : ''}`} onClick={() => setSelectedId('')}><ChevronDown size={14} /><Frame size={14} /><span>Desktop — 1440</span><Eye size={13} /></button>
+              <button className={`layer-row layer-row--frame ${selectedId === 'frame-root' ? 'is-selected' : ''}`} onClick={() => { setSelectedId(''); setEditingTextId(null); }}><ChevronDown size={14} /><Frame size={14} /><span>Desktop — 1440</span><Eye size={13} /></button>
               {layerGroups.map((group) => <div className="layer-group" key={group.title}>
                 <div className="layer-group-title"><ChevronDown size={13} /><span>{group.title}</span></div>
                 {group.ids.map((id) => {
                   const node = nodes.find((item) => item.id === id)
                   if (!node) return null
                   const NodeIcon = node.type === 'text' ? TextCursorInput : node.type === 'ellipse' ? Circle : node.type === 'image' ? ImageIcon : Square
-                  return <button key={id} className={`layer-row ${selectedId === id ? 'is-selected' : ''}`} onClick={() => setSelectedId(id)}><span className="indent" /><NodeIcon size={13} /><span>{node.name.replace(/^.*\/ /, '')}</span>{id === 'hero-card' && <MessageCircle className="layer-comment" size={12} />}</button>
+                  return <button key={id} className={`layer-row ${selectedId === id ? 'is-selected' : ''}`} onClick={() => { setSelectedId(id); setEditingTextId(null); }}><span className="indent" /><NodeIcon size={13} /><span>{node.name.replace(/^.*\/ /, '')}</span>{id === 'hero-card' && <MessageCircle className="layer-comment" size={12} />}</button>
                 })}
               </div>)}
-              {nodes.filter((node) => !layerGroups.some((group) => group.ids.includes(node.id))).map((node) => <button key={node.id} className={`layer-row ${selectedId === node.id ? 'is-selected' : ''}`} onClick={() => setSelectedId(node.id)}><span className="indent" />{node.type === 'text' ? <TextCursorInput size={13} /> : <Square size={13} />}<span>{node.name}</span></button>)}
+              {nodes.filter((node) => !layerGroups.some((group) => group.ids.includes(node.id))).map((node) => <button key={node.id} className={`layer-row ${selectedId === node.id ? 'is-selected' : ''}`} onClick={() => { setSelectedId(node.id); setEditingTextId(null); }}><span className="indent" />{node.type === 'text' ? <TextCursorInput size={13} /> : <Square size={13} />}<span>{node.name}</span></button>)}
             </div>
           </> : <div className="assets-view">
             <div className="asset-search"><Search size={14} /><input placeholder="Search assets" /></div>
@@ -991,8 +1148,8 @@ function App() {
           </div>}
         </aside>
 
-        <section className="canvas-area" ref={canvasRef} onPointerDown={handleCanvasDown}>
-          <div className="canvas-instructions">{activeTool === 'select' ? 'Click a layer to select · drag to move' : activeTool === 'hand' ? 'Drag to pan around your canvas' : `Click the canvas to add a ${activeTool === 'frame' ? 'frame' : activeTool}`}</div>
+        <section className={`canvas-area ${getToolClass()}`} ref={canvasRef} onPointerDown={handleCanvasDown}>
+          <div className="canvas-instructions">{activeTool === 'select' ? 'Click a layer to select · drag to move · double-click text to edit' : activeTool === 'hand' ? 'Drag to pan around your canvas' : `Click the canvas to add a ${activeTool === 'frame' ? 'frame' : activeTool}`}</div>
           <div className="artboard-shadow" style={{ width: board.width, height: board.height, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }} />
           <div className="artboard" style={{ width: board.width, height: board.height, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
             <div className="artboard-label"><Monitor size={12} /> Desktop — 1440</div>
@@ -1020,16 +1177,100 @@ function App() {
               </div>
               {selected.type === 'text' ? <div className="inspector-section">
                 <SectionLabel label="Typography" />
-                <div className="font-field"><span>Inter</span><ChevronDown size={14} /></div>
-                <div className="two-up"><Field label="Size" value={selected.fontSize ?? 16} onChange={(value) => updateNode(selected.id, { fontSize: value })} /><Field label="Weight" value={selected.fontWeight ?? 400} onChange={(value) => updateNode(selected.id, { fontWeight: value })} /></div>
-                <div className="color-field"><span className="color-swatch" style={{ background: selected.color }} /><input value={selected.color ?? '#1C1C1A'} onChange={(event) => updateNode(selected.id, { color: event.target.value })} /></div>
+                <label className="text-input-label">
+                  <span>Text Content</span>
+                  <textarea
+                    className="text-content-input"
+                    value={selected.text ?? ''}
+                    onChange={(event) => updateNode(selected.id, { text: event.target.value })}
+                    rows={3}
+                    placeholder="Enter text content..."
+                  />
+                </label>
+                <div className="font-field">
+                  <select
+                    value={selected.fontFamily ?? 'Inter'}
+                    onChange={(e) => updateNode(selected.id, { fontFamily: e.target.value })}
+                  >
+                    <option value="Inter">Inter (Sans-serif)</option>
+                    <option value="Arial">Arial (Sans-serif)</option>
+                    <option value="Roboto">Roboto (Sans-serif)</option>
+                    <option value="Georgia">Georgia (Serif)</option>
+                    <option value="DM Mono">DM Mono (Monospace)</option>
+                  </select>
+                </div>
+                <div className="two-up"><Field label="Size" value={selected.fontSize ?? 16} onChange={(value) => updateNode(selected.id, { fontSize: Math.max(8, value) })} /><Field label="Weight" value={selected.fontWeight ?? 400} onChange={(value) => updateNode(selected.id, { fontWeight: Math.max(100, Math.min(900, value)) })} /></div>
+                <div className="color-field">
+                  <input
+                    className="native-color"
+                    type="color"
+                    value={selected.color && selected.color.startsWith('#') ? selected.color : '#1C1C1A'}
+                    onChange={(event) => updateNode(selected.id, { color: event.target.value })}
+                  />
+                  <input value={selected.color ?? '#1C1C1A'} onChange={(event) => updateNode(selected.id, { color: event.target.value })} />
+                </div>
               </div> : <div className="inspector-section">
                 <SectionLabel label="Fill" action={<Plus size={14} />} />
                 <div className="color-field"><input className="native-color" type="color" value={selected.fill.startsWith('#') ? selected.fill : '#C4B2FF'} onChange={(event) => updateNode(selected.id, { fill: event.target.value })} /><input value={selected.fill} onChange={(event) => updateNode(selected.id, { fill: event.target.value })} /><span className="fill-percent">{Math.round((selected.opacity ?? 1) * 100)}%</span></div>
-                {selected.type !== 'ellipse' && <Field label="Corner radius" value={selected.radius ?? 0} onChange={(value) => updateNode(selected.id, { radius: value })} />}
+                {selected.type !== 'ellipse' && <Field label="Corner radius" value={selected.radius ?? 0} onChange={(value) => updateNode(selected.id, { radius: Math.max(0, value) })} />}
               </div>}
-              <div className="inspector-section collapsed-row"><span>Stroke</span><Plus size={14} /></div>
-              <div className="inspector-section collapsed-row"><span>Effects</span><Plus size={14} /></div>
+
+              <div className="inspector-section">
+                <div className="section-label">
+                  <span>Stroke</span>
+                  <button
+                    title={selected.stroke ? 'Remove stroke' : 'Add stroke'}
+                    onClick={() => updateNode(selected.id, { stroke: selected.stroke ? undefined : '#1C1C1A', strokeWidth: selected.stroke ? undefined : 1 })}
+                  >
+                    {selected.stroke ? <Trash2 size={13} /> : <Plus size={14} />}
+                  </button>
+                </div>
+                {selected.stroke ? (
+                  <>
+                    <div className="color-field">
+                      <input
+                        className="native-color"
+                        type="color"
+                        value={selected.stroke.startsWith('#') ? selected.stroke : '#1C1C1A'}
+                        onChange={(event) => updateNode(selected.id, { stroke: event.target.value })}
+                      />
+                      <input value={selected.stroke} onChange={(event) => updateNode(selected.id, { stroke: event.target.value })} />
+                    </div>
+                    <div style={{ marginTop: 6 }}>
+                      <Field label="Width" value={selected.strokeWidth ?? 1} suffix="px" onChange={(value) => updateNode(selected.id, { strokeWidth: Math.max(1, value) })} />
+                    </div>
+                  </>
+                ) : (
+                  <div className="collapsed-hint" onClick={() => updateNode(selected.id, { stroke: '#1C1C1A', strokeWidth: 1 })}>
+                    No stroke · Click + to add
+                  </div>
+                )}
+              </div>
+
+              <div className="inspector-section">
+                <div className="section-label">
+                  <span>Effects</span>
+                  <button
+                    title={selected.shadow ? 'Remove effect' : 'Add drop shadow'}
+                    onClick={() => updateNode(selected.id, { shadow: selected.shadow ? undefined : '0px 4px 12px rgba(0,0,0,0.15)' })}
+                  >
+                    {selected.shadow ? <Trash2 size={13} /> : <Plus size={14} />}
+                  </button>
+                </div>
+                {selected.shadow ? (
+                  <div className="effect-row">
+                    <span>Drop Shadow</span>
+                    <button className="icon-button" onClick={() => updateNode(selected.id, { shadow: undefined })} title="Remove shadow">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="collapsed-hint" onClick={() => updateNode(selected.id, { shadow: '0px 4px 12px rgba(0,0,0,0.15)' })}>
+                    No effects · Click + to add shadow
+                  </div>
+                )}
+              </div>
+
               <div className="inspector-section action-section"><button onClick={duplicateNode}><Copy size={14} /> Duplicate</button><button onClick={deleteSelected}><Trash2 size={14} /> Delete</button></div>
             </> : <EmptyInspector />}
           </div>}
