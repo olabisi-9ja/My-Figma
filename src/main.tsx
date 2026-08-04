@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import {
   AlertTriangle,
   ArrowUpRight,
+  Camera,
   Check,
   ChevronDown,
   ChevronRight,
@@ -27,9 +28,11 @@ import {
   Monitor,
   MoreHorizontal,
   MousePointer2,
+  Palette,
   PenTool,
   Play,
   Plus,
+  Puzzle,
   Redo2,
   Search,
   Settings2,
@@ -40,6 +43,7 @@ import {
   TextCursorInput,
   Trash2,
   Undo2,
+  User,
   Users,
   Wand2,
   X,
@@ -65,6 +69,18 @@ import {
 } from './ai'
 import { Tour } from './tour'
 import { HelpModal } from './help'
+import {
+  DEFAULT_PROFILE,
+  PROFILE_COLORS,
+  composeSkillInstructions,
+  initialsFromName,
+  loadProfile,
+  loadSkills,
+  saveProfile,
+  saveSkills,
+  type AiSkill,
+  type Profile,
+} from './personalize'
 import './styles.css'
 
 type NodeKind = 'rect' | 'ellipse' | 'text' | 'image'
@@ -217,6 +233,10 @@ function App() {
   const [pendingWireframe, setPendingWireframe] = useState<WireframeNode[] | null>(null)
   const [reviewResult, setReviewResult] = useState('')
   const [copyOptions, setCopyOptions] = useState<string[] | null>(null)
+  const [skills, setSkills] = useState<AiSkill[]>(() => loadSkills())
+  const [profile, setProfile] = useState<Profile>(() => loadProfile())
+  const [skillsOpen, setSkillsOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
   const tourCheckedRef = useRef(false)
   const canvasRef = useRef<HTMLDivElement>(null)
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -639,12 +659,92 @@ function App() {
     setToast('SVG exported')
   }
 
+  const exportPng = () => {
+    const scale = 2
+    const canvas = document.createElement('canvas')
+    canvas.width = board.width * scale
+    canvas.height = board.height * scale
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      setToast('PNG export is not supported in this browser')
+      return
+    }
+    ctx.scale(scale, scale)
+    ctx.fillStyle = '#FCFAF8'
+    ctx.fillRect(0, 0, board.width, board.height)
+    for (const node of nodesRef.current) {
+      ctx.globalAlpha = node.opacity ?? 1
+      if (node.type === 'text') {
+        ctx.fillStyle = node.color ?? '#1C1C1A'
+        ctx.font = `${node.fontWeight ?? 400} ${node.fontSize ?? 16}px Inter, Arial, sans-serif`
+        ctx.textBaseline = 'top'
+        const lineHeight = (node.fontSize ?? 16) * 1.2
+        ;(node.text ?? '').split('\n').forEach((line, index) => ctx.fillText(line, node.x, node.y + index * lineHeight))
+      } else if (node.type === 'ellipse') {
+        if (node.fill !== 'transparent') {
+          ctx.fillStyle = node.fill
+          ctx.beginPath()
+          ctx.ellipse(node.x + node.width / 2, node.y + node.height / 2, Math.max(1, node.width / 2), Math.max(1, node.height / 2), 0, 0, Math.PI * 2)
+          ctx.fill()
+        }
+      } else if (node.fill !== 'transparent') {
+        ctx.fillStyle = node.fill
+        ctx.beginPath()
+        const radius = Math.min(node.radius ?? 0, node.width / 2, node.height / 2)
+        if (typeof ctx.roundRect === 'function') ctx.roundRect(node.x, node.y, node.width, node.height, radius)
+        else ctx.rect(node.x, node.y, node.width, node.height)
+        ctx.fill()
+      }
+      ctx.globalAlpha = 1
+    }
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        setToast('Could not create the PNG')
+        return
+      }
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(blob)
+      link.download = `${fileName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'canvasly-design'}.png`
+      link.click()
+      window.setTimeout(() => URL.revokeObjectURL(link.href), 800)
+      setShowExport(false)
+      setToast('PNG exported')
+    }, 'image/png')
+  }
+
+  const exportTokens = () => {
+    const colors = new Map<string, number>()
+    const textStyles: { name: string; fontSize: number; fontWeight: number; color: string }[] = []
+    for (const node of nodesRef.current) {
+      const swatch = node.type === 'text' ? node.color : node.fill
+      if (swatch && swatch !== 'transparent') colors.set(swatch.toUpperCase(), (colors.get(swatch.toUpperCase()) ?? 0) + 1)
+      if (node.type === 'text') textStyles.push({ name: node.name, fontSize: node.fontSize ?? 16, fontWeight: node.fontWeight ?? 400, color: node.color ?? '#1C1C1A' })
+    }
+    const palette = [...colors.entries()].sort((a, b) => b[1] - a[1]).map(([value, uses], index) => ({ name: `color-${index + 1}`, value, uses }))
+    const slug = fileName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'canvasly-design'
+    download(JSON.stringify({ format: 'canvasly-tokens', version: 1, project: fileName, exportedAt: new Date().toISOString(), colors: palette, textStyles }, null, 2), 'application/json', `${slug}-tokens.json`)
+    setShowExport(false)
+    setToast('Design tokens exported')
+  }
+
   const addComment = () => {
     const message = commentText.trim()
     if (!message) return
-    setComments((current) => [{ id: `comment-${Date.now()}`, author: 'You', initials: 'YO', color: '#c7f162', message, time: 'now', nodeId: selectedId || undefined }, ...current])
+    setComments((current) => [{ id: `comment-${Date.now()}`, author: profile.name, initials: initialsFromName(profile.name), color: profile.color, message, time: 'now', nodeId: selectedId || undefined }, ...current])
     setCommentText('')
     setToast('Comment added')
+  }
+
+  const changeSkills = (next: AiSkill[]) => {
+    setSkills(next)
+    saveSkills(next)
+  }
+
+  const changeProfile = (next: Profile) => {
+    setProfile(next)
+    saveProfile(next)
+    setProfileOpen(false)
+    setToast(`Workspace is now ${next.name === 'You' ? 'yours' : `${next.name}'s`}`)
   }
 
   const handleAiError = (error: unknown) => {
@@ -659,7 +759,7 @@ function App() {
     setAiIssue(null)
     setPendingWireframe(null)
     try {
-      setPendingWireframe(await generateWireframe(aiSettings, prompt))
+      setPendingWireframe(await generateWireframe(aiSettings, prompt, composeSkillInstructions(skills)))
     } catch (error) {
       handleAiError(error)
     } finally {
@@ -704,7 +804,7 @@ function App() {
     setAiIssue(null)
     setReviewResult('')
     try {
-      setReviewResult(await reviewDesign(aiSettings, buildDesignSummary(nodesRef.current)))
+      setReviewResult(await reviewDesign(aiSettings, buildDesignSummary(nodesRef.current), composeSkillInstructions(skills)))
     } catch (error) {
       handleAiError(error)
     } finally {
@@ -718,7 +818,7 @@ function App() {
     setAiIssue(null)
     setCopyOptions(null)
     try {
-      setCopyOptions(await suggestCopy(aiSettings, selected.text ?? '', selected.name))
+      setCopyOptions(await suggestCopy(aiSettings, selected.text ?? '', selected.name, composeSkillInstructions(skills)))
     } catch (error) {
       handleAiError(error)
     } finally {
@@ -814,7 +914,9 @@ function App() {
 
         <div className="top-actions">
           <div className="collaborators" title="3 people have access">
-            <Avatar initials="YO" color="#C7F162" small />
+            <button className="avatar-button" title={`Your profile — ${profile.name}`} onClick={() => setProfileOpen(true)}>
+              <Avatar initials={initialsFromName(profile.name)} color={profile.color} small />
+            </button>
             <Avatar initials="MC" color="#E6B4F7" small />
             <Avatar initials="JD" color="#A4D6FF" small />
             <button className="more-collaborators">+2</button>
@@ -828,8 +930,11 @@ function App() {
             {showExport && <div className="popover export-popover">
               <div className="popover-title">Export design</div>
               <button onClick={exportSvg}><ImageIcon size={16} /><span><b>SVG</b><small>Vector artwork</small></span><ArrowUpRight size={15} /></button>
+              <button onClick={exportPng}><Camera size={16} /><span><b>PNG</b><small>2× resolution image</small></span><ArrowUpRight size={15} /></button>
               <button onClick={exportJson}><Code2 size={16} /><span><b>Design JSON</b><small>Editable document data</small></span><ArrowUpRight size={15} /></button>
+              <button onClick={exportTokens}><Palette size={16} /><span><b>Design tokens</b><small>Colors & text styles</small></span><ArrowUpRight size={15} /></button>
               <button onClick={() => { void exportBackup() }}><Cloud size={16} /><span><b>Offline backup</b><small>Every local project</small></span><ArrowUpRight size={15} /></button>
+              <p className="export-note">.fig and .sketch are proprietary formats only those apps can write. Import the SVG into Figma or Sketch instead.</p>
             </div>}
           </div>
           <div className="share-wrap">
@@ -969,12 +1074,24 @@ function App() {
         onCopySuggestions={() => { void runCopySuggestions() }}
         onApplyCopy={applyCopyOption}
         onOpenSetup={() => setAiSetupOpen(true)}
+        activeSkills={skills.filter((skill) => skill.enabled).length}
+        onOpenSkills={() => setSkillsOpen(true)}
         onClose={() => setAiOpen(false)}
       />}
       {aiSetupOpen && <AiSetupModal
         initial={aiSettings}
         onClose={() => setAiSetupOpen(false)}
         onSave={saveAiSettingsAndClose}
+      />}
+      {skillsOpen && <SkillsModal
+        skills={skills}
+        onChange={changeSkills}
+        onClose={() => setSkillsOpen(false)}
+      />}
+      {profileOpen && <ProfileModal
+        profile={profile}
+        onSave={changeProfile}
+        onClose={() => setProfileOpen(false)}
       />}
       {toast && <div className="toast"><Check size={15} /> {toast}<button onClick={() => setToast('')} aria-label="Dismiss"><X size={14} /></button></div>}
     </main>
@@ -1011,6 +1128,8 @@ type AiPanelProps = {
   onCopySuggestions: () => void
   onApplyCopy: (option: string) => void
   onOpenSetup: () => void
+  activeSkills: number
+  onOpenSkills: () => void
   onClose: () => void
 }
 
@@ -1023,6 +1142,7 @@ function AiPanel(props: AiPanelProps) {
         <div className="modal-head">
           <h2><Sparkles size={17} /> Canvasly AI</h2>
           <div className="modal-head-actions">
+            <button className="ai-chip" title="AI skills shape every answer" onClick={props.onOpenSkills}><Puzzle size={12} /> Skills{props.activeSkills > 0 ? ` · ${props.activeSkills} on` : ''}</button>
             {configured && <button className="ai-chip" title="Change AI settings" onClick={props.onOpenSetup}><Settings2 size={12} /> {meta.label} · {props.settings.model.trim() || meta.defaultModel}</button>}
             <button aria-label="Close AI panel" onClick={props.onClose}><X size={17} /></button>
           </div>
@@ -1161,6 +1281,113 @@ function AiSetupModal({ initial, onClose, onSave }: { initial: AiSettings; onClo
           <div className="modal-foot-right">
             <button className="tour-secondary" onClick={onClose}>Cancel</button>
             <button className="tour-primary" onClick={() => onSave(draftSettings())}>Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SkillsModal({ skills, onChange, onClose }: { skills: AiSkill[]; onChange: (skills: AiSkill[]) => void; onClose: () => void }) {
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [name, setName] = useState('')
+  const [instructions, setInstructions] = useState('')
+
+  const toggle = (id: string) => onChange(skills.map((skill) => skill.id === id ? { ...skill, enabled: !skill.enabled } : skill))
+  const remove = (id: string) => {
+    onChange(skills.filter((skill) => skill.id !== id))
+    if (editingId === id) resetForm()
+  }
+  const resetForm = () => {
+    setEditingId(null)
+    setName('')
+    setInstructions('')
+  }
+  const editSkill = (skill: AiSkill) => {
+    setEditingId(skill.id)
+    setName(skill.name)
+    setInstructions(skill.instructions)
+  }
+  const submit = () => {
+    const trimmedName = name.trim()
+    const trimmedInstructions = instructions.trim()
+    if (!trimmedName || !trimmedInstructions) return
+    if (editingId) {
+      onChange(skills.map((skill) => skill.id === editingId ? { ...skill, name: trimmedName, instructions: trimmedInstructions } : skill))
+    } else {
+      onChange([...skills, { id: `skill-${Date.now()}`, name: trimmedName, description: 'Custom skill', instructions: trimmedInstructions, enabled: true }])
+    }
+    resetForm()
+  }
+
+  return (
+    <div className="modal-scrim" onClick={onClose}>
+      <div className="modal skills-modal" role="dialog" aria-label="AI skills" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <h2><Puzzle size={17} /> AI skills</h2>
+          <button aria-label="Close skills" onClick={onClose}><X size={17} /></button>
+        </div>
+        <div className="modal-body">
+          <p className="skills-intro">Skills are extra instructions added to every AI request, so answers match how <b>you</b> work. Turn on what you like, or write your own. They are saved on this device permanently.</p>
+          <div className="skills-list">
+            {skills.map((skill) => <div className={`skill-row ${skill.enabled ? 'is-on' : ''}`} key={skill.id}>
+              <div className="skill-text">
+                <b>{skill.name}</b>
+                <small>{skill.builtin ? skill.description : skill.instructions.slice(0, 110) + (skill.instructions.length > 110 ? '…' : '')}</small>
+              </div>
+              <div className="skill-actions">
+                {!skill.builtin && <button className="skill-edit" title="Edit skill" onClick={() => editSkill(skill)}><PenTool size={13} /></button>}
+                {!skill.builtin && <button className="skill-delete" title="Delete skill" onClick={() => remove(skill.id)}><Trash2 size={13} /></button>}
+                <button className={`switch ${skill.enabled ? 'is-on' : ''}`} role="switch" aria-checked={skill.enabled} aria-label={`Toggle ${skill.name}`} onClick={() => toggle(skill.id)}><span /></button>
+              </div>
+            </div>)}
+          </div>
+          <div className="skill-form">
+            <div className="ai-section-head"><Plus size={14} /><h3>{editingId ? 'Edit your skill' : 'Create your own skill'}</h3></div>
+            <input value={name} placeholder="Name — e.g. My brand voice" maxLength={60} onChange={(event) => setName(event.target.value)} />
+            <textarea value={instructions} rows={3} placeholder="Instructions — e.g. Always use dark buttons with white text, and a playful but professional tone." onChange={(event) => setInstructions(event.target.value)} />
+            <div className="skill-form-actions">
+              {editingId && <button className="tour-secondary" onClick={resetForm}>Cancel edit</button>}
+              <button className="tour-primary" disabled={!name.trim() || !instructions.trim()} onClick={submit}>{editingId ? 'Save changes' : 'Add skill'}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProfileModal({ profile, onSave, onClose }: { profile: Profile; onSave: (profile: Profile) => void; onClose: () => void }) {
+  const [name, setName] = useState(profile.name === DEFAULT_PROFILE.name ? '' : profile.name)
+  const [color, setColor] = useState(profile.color)
+  const previewName = name.trim() || DEFAULT_PROFILE.name
+  return (
+    <div className="modal-scrim" onClick={onClose}>
+      <div className="modal profile-modal" role="dialog" aria-label="Your profile" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <h2><User size={17} /> Make it yours</h2>
+          <button aria-label="Close profile" onClick={onClose}><X size={17} /></button>
+        </div>
+        <div className="modal-body">
+          <div className="profile-preview">
+            <Avatar initials={initialsFromName(previewName)} color={color} />
+            <div><b>{previewName}</b><small>Your name signs comments and personalizes the workspace. Saved on this device.</small></div>
+          </div>
+          <label className="setup-field">
+            <span>Your name</span>
+            <input value={name} placeholder="e.g. Olabisi" maxLength={40} onChange={(event) => setName(event.target.value)} />
+          </label>
+          <div className="setup-field">
+            <span>Your color</span>
+            <div className="profile-colors">
+              {PROFILE_COLORS.map((swatch) => <button key={swatch} className={`profile-color ${color === swatch ? 'is-active' : ''}`} style={{ background: swatch }} aria-label={`Choose color ${swatch}`} onClick={() => setColor(swatch)} />)}
+            </div>
+          </div>
+        </div>
+        <div className="modal-foot">
+          <div className="modal-foot-right">
+            <button className="tour-secondary" onClick={onClose}>Cancel</button>
+            <button className="tour-primary" onClick={() => onSave({ name: name.trim() || DEFAULT_PROFILE.name, color })}>Save profile</button>
           </div>
         </div>
       </div>

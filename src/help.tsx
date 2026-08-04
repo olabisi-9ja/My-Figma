@@ -30,6 +30,8 @@ export function HelpModal({ onClose, onReplayTour }: { onClose: () => void; onRe
               <li><b>Duplicate instead of rebuilding.</b> Select a layer and press <code>⌘/Ctrl+D</code> to copy it.</li>
               <li><b>Capture feedback with comments.</b> Open the Prototype tab (right panel) or use the comment tool in the toolbar.</li>
               <li><b>Let AI do the heavy lifting.</b> Set up your key once, then generate whole wireframes from a single sentence.</li>
+              <li><b>Make it yours.</b> Click your avatar (top bar) to set your name and color, and open <b>AI → Skills</b> to teach the AI your style. Both are saved permanently on this device.</li>
+              <li><b>Exporting for other tools?</b> Use SVG (imports into Figma & Sketch), PNG for images, and Design tokens for colors/type. .fig/.sketch files can only be created by those apps themselves.</li>
             </ol>
           </section>
 
@@ -40,6 +42,7 @@ export function HelpModal({ onClose, onReplayTour }: { onClose: () => void; onRe
               <li>Pick a provider — OpenAI, Anthropic, Google Gemini, or any OpenAI-compatible endpoint — and paste your API key.</li>
               <li>Press <b>Test connection</b>, then <b>Save</b>. The key is stored only in this browser and is sent only to the provider you chose.</li>
               <li>Now use the three AI actions: <b>generate a wireframe</b> from a prompt, <b>review the design</b> in plain language, or select a text layer and <b>improve its copy</b>.</li>
+              <li>To shape how the AI works, open <b>AI → Skills</b>: toggle built-in styles (plain voice, minimal wireframes, mobile-first, accessibility focus) or write your own rules — they’re saved permanently.</li>
             </ol>
             <p className="help-links">
               Get a key: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">OpenAI <ArrowUpRight size={11} /></a>

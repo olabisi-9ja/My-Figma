@@ -262,17 +262,17 @@ export function parseWireframe(raw: string): WireframeNode[] {
   })
 }
 
-export async function generateWireframe(settings: AiSettings, prompt: string): Promise<WireframeNode[]> {
-  const raw = await callWithNetworkFallback(settings, WIREFRAME_SYSTEM, `Design a wireframe for: ${prompt.trim().slice(0, 600)}`, true)
+export async function generateWireframe(settings: AiSettings, prompt: string, extraRules = ''): Promise<WireframeNode[]> {
+  const raw = await callWithNetworkFallback(settings, WIREFRAME_SYSTEM + (extraRules ? `\n\n${extraRules}` : ''), `Design a wireframe for: ${prompt.trim().slice(0, 600)}`, true)
   return parseWireframe(raw)
 }
 
 /* --- Design review --------------------------------------------------*/
 
-export async function reviewDesign(settings: AiSettings, summary: string): Promise<string> {
+export async function reviewDesign(settings: AiSettings, summary: string, extraRules = ''): Promise<string> {
   return callWithNetworkFallback(
     settings,
-    'You are a friendly senior product designer reviewing a screen inside Canvasly. Write for a non-designer: plain language, no jargon, short sentences.',
+    'You are a friendly senior product designer reviewing a screen inside Canvasly. Write for a non-designer: plain language, no jargon, short sentences.' + (extraRules ? `\n\n${extraRules}` : ''),
     `${summary}\n\nFirst, explain what this screen is in 2–3 plain sentences. Then give exactly 3 specific, actionable improvements as a numbered list. Keep the whole reply under 160 words.`,
     false,
   )
@@ -280,10 +280,10 @@ export async function reviewDesign(settings: AiSettings, summary: string): Promi
 
 /* --- Copy improvements ----------------------------------------------*/
 
-export async function suggestCopy(settings: AiSettings, currentText: string, layerName: string): Promise<string[]> {
+export async function suggestCopy(settings: AiSettings, currentText: string, layerName: string, extraRules = ''): Promise<string[]> {
   const raw = await callWithNetworkFallback(
     settings,
-    'You are a concise UX copywriter. Improve short UI copy without changing its meaning or tone. Respond with ONLY JSON: {"options":["…","…","…"]}',
+    'You are a concise UX copywriter. Improve short UI copy without changing its meaning or tone. Respond with ONLY JSON: {"options":["…","…","…"]}' + (extraRules ? `\n\n${extraRules}` : ''),
     `The layer is named "${layerName}". Current copy: "${currentText.slice(0, 300)}". Give exactly 3 improved alternatives, each similar in length to the original.`,
     true,
   )
