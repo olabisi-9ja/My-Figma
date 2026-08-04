@@ -1,5 +1,5 @@
 /* Canvasly's offline app shell. Projects are stored separately in IndexedDB. */
-const VERSION = 'canvasly-shell-v2'
+const VERSION = 'canvasly-shell-v3'
 const SHELL = ['/', '/index.html', '/offline.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png']
 
 async function cacheAppShell() {

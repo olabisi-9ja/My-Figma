@@ -2,7 +2,7 @@
   "id": "/",
   "name": "Canvasly — Personal Design Workspace",
   "short_name": "Canvasly",
-  "description": "An offline-first personal canvas for design, comments, and quick exports.",
+  "description": "An offline-first design workspace with bring-your-own-key AI wireframing, comments, and quick exports.",
   "lang": "en",
   "start_url": "/",
   "scope": "/",

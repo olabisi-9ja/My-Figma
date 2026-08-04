@@ -13,11 +13,51 @@ Your projects are stored on the device in **IndexedDB**. No account, server, or 
 - Local project library: create, rename, open, and delete projects
 - IndexedDB autosave for larger, durable local project data
 - Editable design properties, comments UI, component starters, and handoff panel
+- **Canvasly AI (bring your own key)**: prompt-to-wireframe, plain-language design review, and copy improvement
+- **Guided tour** on first launch, replayable anytime, plus a Tips & help panel
 - Export the current design as SVG or editable Design JSON
 - Export a complete offline backup of every local project
 - Import a Canvasly backup or exported Design JSON file
 
 > This remains an interface MVP: collaborative sync, real vector pen paths, image imports, version history, authentication, and a prototype player are future milestones.
+
+## Canvasly AI — bring your own key (BYOK)
+
+Canvasly has **no server and no AI subscription**. You paste your own API key, and AI calls go straight from your browser to the provider you pick. The key is stored only in this browser (localStorage) and is never sent anywhere except the endpoint you configure.
+
+### Set up in four steps
+
+1. Click the **AI** button (sparkles) in the top bar → **Set up AI**.
+2. Pick a provider and paste a key:
+
+   | Provider | Get a key | Default model |
+   | --- | --- | --- |
+   | OpenAI | platform.openai.com/api-keys | `gpt-4o-mini` |
+   | Anthropic (Claude) | console.anthropic.com | `claude-3-5-haiku-latest` |
+   | Google Gemini | aistudio.google.com/apikey | `gemini-2.0-flash` |
+   | OpenAI-compatible | e.g. openrouter.ai/keys, LM Studio, Ollama | any model that endpoint serves |
+
+3. Press **Test connection**, then **Save**.
+4. Use the three AI actions.
+
+For the *OpenAI-compatible* provider you also set a **base URL** (for example `https://openrouter.ai/api/v1`). Local servers must allow browser (CORS) requests.
+
+### What the AI can do
+
+- **Wireframe from a prompt** — describe a screen in one sentence; Canvasly generates it and adds it below your design as fully editable layers. This keeps generated structure *alive and editable*, never disposable.
+- **Review this design** — a plain-language explanation of the current screen for non-designers, plus three concrete improvements.
+- **Improve selected copy** — select any text layer and get three rewritten versions; click one to apply it.
+
+### Privacy
+
+Designs never leave the device. When you use an AI action, only your prompt and a compact summary of the canvas are sent to the provider you configured — never to Canvasly itself.
+
+## Learning the app: tour & tips
+
+- **First launch**: a guided tour with spotlight highlights walks through projects, tools, canvas, layers, inspector, comments, AI, and export (~90 seconds).
+- **Replay anytime**: open the 💡 **Tips & help** button in the top bar → **Replay guided tour**.
+- The same panel lists quick-start tips, every keyboard shortcut, and the AI setup steps.
+- The tour progress is remembered per browser; use ⌘/Ctrl+Z to undo anything while experimenting.
 
 ## Run locally
 

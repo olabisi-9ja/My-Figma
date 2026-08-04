@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
+  AlertTriangle,
   ArrowUpRight,
   Check,
   ChevronDown,
@@ -11,12 +12,16 @@ import {
   Copy,
   Download,
   Eye,
+  EyeOff,
   Frame,
   Hand,
   Image as ImageIcon,
+  KeyRound,
   Layers3,
   LayoutGrid,
+  Lightbulb,
   Link2,
+  Loader2,
   LockKeyhole,
   MessageCircle,
   Monitor,
@@ -27,18 +32,39 @@ import {
   Plus,
   Redo2,
   Search,
+  Settings2,
   Share2,
+  Sparkles,
   Square,
   Star,
   TextCursorInput,
   Trash2,
   Undo2,
   Users,
+  Wand2,
   X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
 import { deleteProject, getProjects, makeProject, parseImport, putProject, type LocalProject } from './storage'
+import {
+  AiError,
+  PROVIDERS,
+  aiConfigured,
+  buildDesignSummary,
+  clearAiSettings,
+  generateWireframe,
+  loadAiSettings,
+  providerMeta,
+  reviewDesign,
+  saveAiSettings,
+  suggestCopy,
+  testAiConnection,
+  type AiSettings,
+  type WireframeNode,
+} from './ai'
+import { Tour } from './tour'
+import { HelpModal } from './help'
 import './styles.css'
 
 type NodeKind = 'rect' | 'ellipse' | 'text' | 'image'
@@ -180,6 +206,18 @@ function App() {
   const [mobilePanel, setMobilePanel] = useState<'layers' | 'inspector' | null>(null)
   const [isOnline, setIsOnline] = useState(navigator.onLine)
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null)
+  const [aiSettings, setAiSettings] = useState<AiSettings>(() => loadAiSettings())
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiSetupOpen, setAiSetupOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [tourOpen, setTourOpen] = useState(false)
+  const [aiBusy, setAiBusy] = useState<'' | 'wireframe' | 'review' | 'copy'>('')
+  const [aiIssue, setAiIssue] = useState<{ message: string; hint?: string } | null>(null)
+  const [wireframePrompt, setWireframePrompt] = useState('')
+  const [pendingWireframe, setPendingWireframe] = useState<WireframeNode[] | null>(null)
+  const [reviewResult, setReviewResult] = useState('')
+  const [copyOptions, setCopyOptions] = useState<string[] | null>(null)
+  const tourCheckedRef = useRef(false)
   const canvasRef = useRef<HTMLDivElement>(null)
   const importInputRef = useRef<HTMLInputElement>(null)
 
@@ -319,6 +357,28 @@ function App() {
   }, [nodes, fileName, activeProjectId, storageReady])
 
   useEffect(() => {
+    if (!storageReady || tourCheckedRef.current) return
+    tourCheckedRef.current = true
+    if (!window.localStorage.getItem('canvasly-tour-completed')) {
+      // Small pause so the panels are laid out before the tour highlights them.
+      const timer = window.setTimeout(() => setTourOpen(true), 500)
+      return () => window.clearTimeout(timer)
+    }
+  // The first-run tour check should happen exactly once, after hydration.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageReady])
+
+  const finishTour = () => {
+    setTourOpen(false)
+    window.localStorage.setItem('canvasly-tour-completed', '1')
+  }
+
+  const startTour = () => {
+    setHelpOpen(false)
+    setTourOpen(true)
+  }
+
+  useEffect(() => {
     const updateNetwork = () => setIsOnline(navigator.onLine)
     const captureInstall = (event: Event) => {
       event.preventDefault()
@@ -385,6 +445,9 @@ function App() {
         setActiveTool('select')
         setShowExport(false)
         setShowShare(false)
+        setAiOpen(false)
+        setAiSetupOpen(false)
+        setHelpOpen(false)
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -584,6 +647,100 @@ function App() {
     setToast('Comment added')
   }
 
+  const handleAiError = (error: unknown) => {
+    if (error instanceof AiError) setAiIssue({ message: error.message, hint: error.hint })
+    else setAiIssue({ message: 'Something went wrong while calling the AI.', hint: 'Check your connection and AI settings, then try again.' })
+  }
+
+  const runWireframe = async () => {
+    const prompt = wireframePrompt.trim()
+    if (!prompt || aiBusy) return
+    setAiBusy('wireframe')
+    setAiIssue(null)
+    setPendingWireframe(null)
+    try {
+      setPendingWireframe(await generateWireframe(aiSettings, prompt))
+    } catch (error) {
+      handleAiError(error)
+    } finally {
+      setAiBusy('')
+    }
+  }
+
+  const addWireframeToCanvas = () => {
+    if (!pendingWireframe?.length) return
+    const stamp = Date.now()
+    const current = nodesRef.current
+    const maxY = current.reduce((max, node) => Math.max(max, node.y + node.height), 0)
+    const startY = maxY + 90
+    const startX = 80
+    const generated: DesignNode[] = pendingWireframe.map((node, index) => ({
+      id: `ai-${stamp}-${index}`,
+      type: node.type,
+      name: node.name ? `AI / ${node.name}` : `AI / ${node.type} ${index + 1}`,
+      x: startX + node.x,
+      y: startY + node.y,
+      width: node.width,
+      height: node.height,
+      fill: node.fill ?? 'transparent',
+      radius: node.radius,
+      text: node.text,
+      fontSize: node.fontSize,
+      fontWeight: node.fontWeight,
+      color: node.color,
+    }))
+    replaceNodes([...current, ...generated], true)
+    setSelectedId(generated[0]?.id ?? '')
+    setPendingWireframe(null)
+    setWireframePrompt('')
+    setAiOpen(false)
+    setPan({ x: Math.round(105 - startX * zoom), y: Math.round(90 - startY * zoom) })
+    setToast(`Added ${generated.length} AI layers below your design`)
+  }
+
+  const runReview = async () => {
+    if (aiBusy) return
+    setAiBusy('review')
+    setAiIssue(null)
+    setReviewResult('')
+    try {
+      setReviewResult(await reviewDesign(aiSettings, buildDesignSummary(nodesRef.current)))
+    } catch (error) {
+      handleAiError(error)
+    } finally {
+      setAiBusy('')
+    }
+  }
+
+  const runCopySuggestions = async () => {
+    if (aiBusy || !selected || selected.type !== 'text') return
+    setAiBusy('copy')
+    setAiIssue(null)
+    setCopyOptions(null)
+    try {
+      setCopyOptions(await suggestCopy(aiSettings, selected.text ?? '', selected.name))
+    } catch (error) {
+      handleAiError(error)
+    } finally {
+      setAiBusy('')
+    }
+  }
+
+  const applyCopyOption = (option: string) => {
+    if (!selected) return
+    updateNode(selected.id, { text: option })
+    setCopyOptions(null)
+    setToast('Copy updated on the canvas')
+  }
+
+  const saveAiSettingsAndClose = (next: AiSettings) => {
+    saveAiSettings(next)
+    setAiSettings(next)
+    setAiSetupOpen(false)
+    setAiIssue(null)
+    setToast(next.apiKey.trim() ? 'AI is ready to use' : 'AI settings saved')
+  }
+
   const renderNode = (node: DesignNode) => {
     const isSelected = selectedId === node.id
     const style: CSSProperties = {
@@ -663,6 +820,9 @@ function App() {
             <button className="more-collaborators">+2</button>
           </div>
           {installPrompt && <button className="install-button" onClick={() => { void installApp() }}><Download size={14} /> Install</button>}
+          <button className={`ai-button ${aiOpen ? 'is-open' : ''}`} title="Canvasly AI — bring your own key" onClick={() => { setAiOpen((value) => !value); setShowExport(false); setShowShare(false) }}>
+            <Sparkles size={14} /> AI
+          </button>
           <div className="export-wrap">
             <button className="top-text-button" onClick={() => { setShowExport((value) => !value); setShowShare(false) }}>Export <ChevronDown size={14} /></button>
             {showExport && <div className="popover export-popover">
@@ -682,6 +842,7 @@ function App() {
               <p><LockKeyhole size={13} /> Only invited people can access this file.</p>
             </div>}
           </div>
+          <IconButton label="Tips & help" active={helpOpen} onClick={() => setHelpOpen((value) => !value)}><Lightbulb size={16} /></IconButton>
         </div>
       </header>
 
@@ -788,6 +949,33 @@ function App() {
         <div className="bottom-center"><span className={`sync-dot ${isOnline ? '' : 'is-offline'}`} /> {isOnline ? 'Autosaved offline' : 'Offline — local projects ready'}</div>
         <div><button onClick={() => setInspectorTab('prototype')}><MessageCircle size={15} /> {comments.filter((item) => !item.resolved).length}</button><button onClick={() => { void saveDraft() }}><Cloud size={15} /> Save</button></div>
       </footer>
+      {tourOpen && <Tour onClose={finishTour} />}
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} onReplayTour={startTour} />}
+      {aiOpen && <AiPanel
+        settings={aiSettings}
+        busy={aiBusy}
+        issue={aiIssue}
+        prompt={wireframePrompt}
+        onPromptChange={(value) => { setWireframePrompt(value); setAiIssue(null) }}
+        pending={pendingWireframe}
+        onGenerate={() => { void runWireframe() }}
+        onAddWireframe={addWireframeToCanvas}
+        onDiscard={() => setPendingWireframe(null)}
+        review={reviewResult}
+        onReview={() => { void runReview() }}
+        selectedText={selected?.type === 'text' ? selected.text ?? '' : null}
+        selectedName={selected?.type === 'text' ? selected.name : ''}
+        copyOptions={copyOptions}
+        onCopySuggestions={() => { void runCopySuggestions() }}
+        onApplyCopy={applyCopyOption}
+        onOpenSetup={() => setAiSetupOpen(true)}
+        onClose={() => setAiOpen(false)}
+      />}
+      {aiSetupOpen && <AiSetupModal
+        initial={aiSettings}
+        onClose={() => setAiSetupOpen(false)}
+        onSave={saveAiSettingsAndClose}
+      />}
       {toast && <div className="toast"><Check size={15} /> {toast}<button onClick={() => setToast('')} aria-label="Dismiss"><X size={14} /></button></div>}
     </main>
   )
@@ -803,6 +991,181 @@ function SectionLabel({ label, action }: { label: string; action?: ReactNode }) 
 
 function EmptyInspector() {
   return <div className="empty-inspector"><div className="empty-icon"><MousePointer2 size={20} /></div><h3>Select a layer</h3><p>Click anything on the canvas to edit its properties, sizing, and styling.</p></div>
+}
+
+type AiPanelProps = {
+  settings: AiSettings
+  busy: '' | 'wireframe' | 'review' | 'copy'
+  issue: { message: string; hint?: string } | null
+  prompt: string
+  onPromptChange: (value: string) => void
+  pending: WireframeNode[] | null
+  onGenerate: () => void
+  onAddWireframe: () => void
+  onDiscard: () => void
+  review: string
+  onReview: () => void
+  selectedText: string | null
+  selectedName: string
+  copyOptions: string[] | null
+  onCopySuggestions: () => void
+  onApplyCopy: (option: string) => void
+  onOpenSetup: () => void
+  onClose: () => void
+}
+
+function AiPanel(props: AiPanelProps) {
+  const configured = aiConfigured(props.settings)
+  const meta = providerMeta(props.settings.provider)
+  return (
+    <div className="modal-scrim" onClick={props.onClose}>
+      <div className="modal ai-modal" role="dialog" aria-label="Canvasly AI" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <h2><Sparkles size={17} /> Canvasly AI</h2>
+          <div className="modal-head-actions">
+            {configured && <button className="ai-chip" title="Change AI settings" onClick={props.onOpenSetup}><Settings2 size={12} /> {meta.label} · {props.settings.model.trim() || meta.defaultModel}</button>}
+            <button aria-label="Close AI panel" onClick={props.onClose}><X size={17} /></button>
+          </div>
+        </div>
+        <div className="modal-body">
+          {!configured ? <div className="ai-setup-hero">
+            <div className="ai-setup-icon"><KeyRound size={22} /></div>
+            <h3>Bring your own AI key (BYOK)</h3>
+            <p>Canvasly has no server and no subscription. Paste your own API key and the AI calls go straight from your browser to the provider you choose.</p>
+            <ul>
+              <li>OpenAI, Anthropic, Google Gemini, or any OpenAI-compatible endpoint</li>
+              <li>Your key is stored only in this browser — never anywhere else</li>
+              <li>Works with the canvas: wireframes land as editable layers</li>
+            </ul>
+            <button className="tour-primary" onClick={props.onOpenSetup}><Sparkles size={14} /> Set up AI</button>
+          </div> : <>
+            {props.issue && <div className="ai-error"><AlertTriangle size={15} /><div><b>{props.issue.message}</b>{props.issue.hint && <small>{props.issue.hint}</small>}</div></div>}
+
+            <section className="ai-section">
+              <div className="ai-section-head"><Wand2 size={15} /><h3>Wireframe from a prompt</h3></div>
+              <p>Describe a screen and Canvasly adds it below your design as editable layers.</p>
+              <textarea value={props.prompt} onChange={(event) => props.onPromptChange(event.target.value)} placeholder="e.g. Landing page for a coffee subscription app: nav, big hero, three benefits, pricing, footer" rows={2} disabled={props.busy === 'wireframe'} />
+              {props.pending ? <div className="ai-result">
+                <b>{props.pending.length} layers ready</b>
+                <span className="ai-result-names">{props.pending.slice(0, 6).map((node) => node.name ?? node.type).join(' · ')}{props.pending.length > 6 ? ' · …' : ''}</span>
+                <div className="ai-result-actions">
+                  <button className="tour-primary" onClick={props.onAddWireframe}><Plus size={14} /> Add to canvas</button>
+                  <button className="tour-secondary" onClick={props.onDiscard}>Discard</button>
+                </div>
+              </div> : <button className="tour-primary" disabled={props.busy === 'wireframe' || !props.prompt.trim()} onClick={props.onGenerate}>
+                {props.busy === 'wireframe' ? <><Loader2 size={14} className="spin" /> Generating…</> : <><Wand2 size={14} /> Generate wireframe</>}
+              </button>}
+            </section>
+
+            <section className="ai-section">
+              <div className="ai-section-head"><Eye size={15} /><h3>Review this design</h3></div>
+              <p>Get a plain-language explanation of the current screen plus three concrete improvements.</p>
+              {props.review && <div className="ai-answer">{props.review}</div>}
+              <button className="tour-secondary" disabled={props.busy === 'review'} onClick={props.onReview}>
+                {props.busy === 'review' ? <><Loader2 size={14} className="spin" /> Reviewing…</> : props.review ? 'Review again' : 'Explain & review'}
+              </button>
+            </section>
+
+            <section className="ai-section ai-section--last">
+              <div className="ai-section-head"><TextCursorInput size={15} /><h3>Improve selected copy</h3></div>
+              {props.selectedText === null ? <p className="ai-muted">Select a text layer on the canvas, then come back here for three rewritten versions.</p> : <>
+                <p className="ai-selected-copy">“{props.selectedText.replace(/\s+/g, ' ').slice(0, 120)}” — <i>{props.selectedName}</i></p>
+                {props.copyOptions && <div className="ai-copy-options">
+                  {props.copyOptions.map((option) => <button key={option} onClick={() => props.onApplyCopy(option)}>{option}</button>)}
+                </div>}
+                <button className="tour-secondary" disabled={props.busy === 'copy'} onClick={props.onCopySuggestions}>
+                  {props.busy === 'copy' ? <><Loader2 size={14} className="spin" /> Writing…</> : props.copyOptions ? 'Suggest again' : 'Suggest better copy'}
+                </button>
+              </>}
+            </section>
+          </>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AiSetupModal({ initial, onClose, onSave }: { initial: AiSettings; onClose: () => void; onSave: (settings: AiSettings) => void }) {
+  const [provider, setProvider] = useState(initial.provider)
+  const [apiKey, setApiKey] = useState(initial.apiKey)
+  const [model, setModel] = useState(initial.model)
+  const [baseUrl, setBaseUrl] = useState(initial.baseUrl)
+  const [showKey, setShowKey] = useState(false)
+  const [testState, setTestState] = useState<'' | 'busy' | 'ok' | 'fail'>('')
+  const [testMessage, setTestMessage] = useState('')
+  const meta = providerMeta(provider)
+
+  const draftSettings = (): AiSettings => ({ provider, apiKey, model, baseUrl })
+
+  const runTest = async () => {
+    if (!apiKey.trim()) {
+      setTestState('fail')
+      setTestMessage('Paste an API key first.')
+      return
+    }
+    setTestState('busy')
+    setTestMessage('')
+    try {
+      const reply = await testAiConnection(draftSettings())
+      setTestState('ok')
+      setTestMessage(`Connected — the model replied “${reply}”.`)
+    } catch (error) {
+      setTestState('fail')
+      setTestMessage(error instanceof AiError ? `${error.message}${error.hint ? ` ${error.hint}` : ''}` : 'Could not reach the provider.')
+    }
+  }
+
+  return (
+    <div className="modal-scrim" onClick={onClose}>
+      <div className="modal setup-modal" role="dialog" aria-label="AI settings" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <h2><KeyRound size={17} /> AI settings — bring your own key</h2>
+          <button aria-label="Close AI settings" onClick={onClose}><X size={17} /></button>
+        </div>
+        <div className="modal-body">
+          <div className="setup-providers">
+            {PROVIDERS.map((item) => (
+              <button key={item.id} className={`setup-provider ${provider === item.id ? 'is-active' : ''}`} onClick={() => { setProvider(item.id); setTestState('') }}>
+                <span /><b>{item.label}</b>
+              </button>
+            ))}
+          </div>
+          <label className="setup-field">
+            <span>API key</span>
+            <div className="setup-key-row">
+              <input type={showKey ? 'text' : 'password'} value={apiKey} placeholder={meta.keyHint} autoComplete="off" spellCheck={false} onChange={(event) => { setApiKey(event.target.value); setTestState('') }} />
+              <button type="button" aria-label={showKey ? 'Hide key' : 'Show key'} onClick={() => setShowKey((value) => !value)}>{showKey ? <EyeOff size={15} /> : <Eye size={15} />}</button>
+            </div>
+            <small>Get one at <a href={meta.keyUrl} target="_blank" rel="noreferrer">{meta.keyUrl.replace('https://', '')}</a></small>
+          </label>
+          <label className="setup-field">
+            <span>Model</span>
+            <input value={model} placeholder={meta.defaultModel} spellCheck={false} onChange={(event) => { setModel(event.target.value); setTestState('') }} />
+            <small>Leave empty to use the default ({meta.defaultModel}).</small>
+          </label>
+          {provider === 'compatible' && <label className="setup-field">
+            <span>Base URL</span>
+            <input value={baseUrl} placeholder="https://openrouter.ai/api/v1" spellCheck={false} onChange={(event) => { setBaseUrl(event.target.value); setTestState('') }} />
+            <small>For OpenRouter, local servers (LM Studio, Ollama), or any OpenAI-compatible API. The server must allow browser (CORS) requests.</small>
+          </label>}
+          <div className="setup-test">
+            <button className="tour-secondary" disabled={testState === 'busy'} onClick={() => { void runTest() }}>
+              {testState === 'busy' ? <><Loader2 size={14} className="spin" /> Testing…</> : 'Test connection'}
+            </button>
+            {testMessage && <p className={testState === 'ok' ? 'is-ok' : testState === 'fail' ? 'is-fail' : ''}>{testMessage}</p>}
+          </div>
+          <p className="setup-privacy"><LockKeyhole size={13} /> Stored only in this browser. Sent only to {meta.label === 'OpenAI-compatible (OpenRouter, local…)' ? 'the endpoint you configure' : meta.label} when you use an AI action.</p>
+        </div>
+        <div className="modal-foot">
+          {aiConfigured(initial) && <button className="setup-remove" onClick={() => { clearAiSettings(); onSave({ ...initial, apiKey: '' }) }}>Remove key</button>}
+          <div className="modal-foot-right">
+            <button className="tour-secondary" onClick={onClose}>Cancel</button>
+            <button className="tour-primary" onClick={() => onSave(draftSettings())}>Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 createRoot(document.getElementById('root')!).render(<App />)
