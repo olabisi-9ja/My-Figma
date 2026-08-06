@@ -1510,7 +1510,7 @@ function AiSetupModal({ initial, onClose, onSave }: { initial: AiSettings; onClo
               <button type="button" aria-label={showKey ? 'Hide key' : 'Show key'} onClick={() => setShowKey((value) => !value)}>{showKey ? <EyeOff size={15} /> : <Eye size={15} />}</button>
             </div>
             {customHost
-              ? <small>Get one from your {customHost} dashboard.</small>
+              ? <small>Get one from your <a href={`https://${customHost}`} target="_blank" rel="noreferrer">{customHost}</a> dashboard.</small>
               : <small>Get one at <a href={meta.keyUrl} target="_blank" rel="noreferrer">{meta.keyUrl.replace('https://', '')}</a></small>}
           </label>
           <label className="setup-field">
