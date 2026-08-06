@@ -1456,6 +1456,18 @@ function AiSetupModal({ initial, onClose, onSave }: { initial: AiSettings; onClo
   const [testMessage, setTestMessage] = useState('')
   const meta = providerMeta(provider)
 
+  // When a custom base URL is set, point users at *that* service for keys
+  // instead of the generic OpenRouter link.
+  const customHost = (() => {
+    if (provider !== 'compatible' || !baseUrl.trim()) return ''
+    try {
+      const host = new URL(baseUrl.trim()).host
+      return host && host !== 'localhost' ? host : ''
+    } catch {
+      return ''
+    }
+  })()
+
   const draftSettings = (): AiSettings => ({ provider, apiKey, model, baseUrl })
 
   const runTest = async () => {
@@ -1497,7 +1509,9 @@ function AiSetupModal({ initial, onClose, onSave }: { initial: AiSettings; onClo
               <input type={showKey ? 'text' : 'password'} value={apiKey} placeholder={meta.keyHint} autoComplete="off" spellCheck={false} onChange={(event) => { setApiKey(event.target.value); setTestState('') }} />
               <button type="button" aria-label={showKey ? 'Hide key' : 'Show key'} onClick={() => setShowKey((value) => !value)}>{showKey ? <EyeOff size={15} /> : <Eye size={15} />}</button>
             </div>
-            <small>Get one at <a href={meta.keyUrl} target="_blank" rel="noreferrer">{meta.keyUrl.replace('https://', '')}</a></small>
+            {customHost
+              ? <small>Get one from your {customHost} dashboard.</small>
+              : <small>Get one at <a href={meta.keyUrl} target="_blank" rel="noreferrer">{meta.keyUrl.replace('https://', '')}</a></small>}
           </label>
           <label className="setup-field">
             <span>Model</span>

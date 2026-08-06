@@ -86,15 +86,18 @@ export class AiError extends Error {
 function friendlyHttpError(provider: string, status: number, body: string): AiError {
   let detail = ''
   try {
-    const parsed = JSON.parse(body) as { error?: { message?: string } }
-    detail = parsed?.error?.message ?? ''
+    const parsed = JSON.parse(body) as { error?: { message?: string } | string }
+    detail = typeof parsed?.error === 'string' ? parsed.error : parsed?.error?.message ?? ''
   } catch {
-    detail = body.slice(0, 160)
+    detail = body.replace(/\s+/g, ' ').slice(0, 160)
   }
-  if (status === 401 || status === 403) return new AiError(`${provider} rejected the API key.`, 'Double-check the key in AI settings, or confirm the account has access.')
-  if (status === 404) return new AiError(`${provider} could not find that model.`, 'Check the model name in AI settings — the default usually works.')
-  if (status === 429) return new AiError(`${provider} rate limit reached.`, 'Wait a moment and try again, or check your plan limits.')
-  return new AiError(`${provider} returned an error (${status}).`, detail || undefined)
+  // Keep the endpoint's own explanation — it usually says exactly what's wrong
+  // (expired credits, unknown model, wrong header…), which beats a generic guess.
+  const said = detail.trim() ? ` The endpoint said: “${detail.trim().slice(0, 200)}”.` : ''
+  if (status === 401 || status === 403) return new AiError(`${provider} rejected the API key.${said}`, 'Double-check the key in AI settings, or confirm the account has access.')
+  if (status === 404) return new AiError(`${provider} could not find that model.${said}`, 'Check the model name in AI settings — the default usually works.')
+  if (status === 429) return new AiError(`${provider} rate limit reached.${said}`, 'Wait a moment and try again, or check your plan limits.')
+  return new AiError(`${provider} returned an error (${status}).`, detail.trim() || undefined)
 }
 
 async function chat(settings: AiSettings, system: string, user: string, jsonMode: boolean): Promise<string> {
@@ -139,9 +142,13 @@ async function chat(settings: AiSettings, system: string, user: string, jsonMode
 
   // OpenAI and any OpenAI-compatible endpoint (OpenRouter, LM Studio, Ollama…).
   const base = (settings.baseUrl.trim() || 'https://api.openai.com/v1').replace(/\/+$/, '')
+  const headers: Record<string, string> = { 'content-type': 'application/json', authorization: `Bearer ${key}` }
+  // Some OpenAI-compatible gateways read the key from `x-api-key` rather than
+  // (or in addition to) the standard Bearer header — send both so either style authenticates.
+  if (settings.provider === 'compatible') headers['x-api-key'] = key
   const response = await fetch(`${base}/chat/completions`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+    headers,
     body: JSON.stringify({
       model,
       temperature: 0.5,
