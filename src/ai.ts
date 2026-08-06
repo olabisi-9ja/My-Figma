@@ -86,18 +86,85 @@ export class AiError extends Error {
 function friendlyHttpError(provider: string, status: number, body: string): AiError {
   let detail = ''
   try {
-    const parsed = JSON.parse(body) as { error?: { message?: string } | string }
-    detail = typeof parsed?.error === 'string' ? parsed.error : parsed?.error?.message ?? ''
+    const parsed = JSON.parse(body) as {
+      error?: { message?: string; type?: string; code?: string } | string
+      message?: string
+    }
+    if (typeof parsed?.error === 'string') {
+      detail = parsed.error
+    } else if (parsed?.error?.message) {
+      detail = parsed.error.message
+    } else if (typeof parsed?.message === 'string') {
+      detail = parsed.message
+    }
   } catch {
-    detail = body.replace(/\s+/g, ' ').slice(0, 160)
+    detail = body.replace(/\s+/g, ' ').slice(0, 200)
   }
+
   // Keep the endpoint's own explanation — it usually says exactly what's wrong
   // (expired credits, unknown model, wrong header…), which beats a generic guess.
-  const said = detail.trim() ? ` The endpoint said: “${detail.trim().slice(0, 200)}”.` : ''
-  if (status === 401 || status === 403) return new AiError(`${provider} rejected the API key.${said}`, 'Double-check the key in AI settings, or confirm the account has access.')
-  if (status === 404) return new AiError(`${provider} could not find that model.${said}`, 'Check the model name in AI settings — the default usually works.')
-  if (status === 429) return new AiError(`${provider} rate limit reached.${said}`, 'Wait a moment and try again, or check your plan limits.')
-  return new AiError(`${provider} returned an error (${status}).`, detail.trim() || undefined)
+  const said = detail.trim() ? ` The endpoint said: “${detail.trim().slice(0, 240)}”.` : ''
+  const combined = `${detail} ${body}`.toLowerCase()
+
+  // 1. Gateway client-allowlist block (e.g. AgentRouter client enforcement)
+  if (
+    combined.includes('unauthorized client') ||
+    combined.includes('unauthorized_client') ||
+    combined.includes('allowlist') ||
+    combined.includes('allow-list') ||
+    combined.includes('client is not allowed') ||
+    combined.includes('client not authorized') ||
+    combined.includes('client not permitted')
+  ) {
+    return new AiError(
+      `${provider} blocked this request (client allowlist).${said}`,
+      'This gateway only accepts pre-approved clients. Contact provider support to allowlist Canvasly / browser clients, or switch to OpenRouter, OpenAI, Anthropic, Gemini, or a local server.',
+    )
+  }
+
+  // 2. Insufficient credits / quota
+  if (
+    combined.includes('insufficient_quota') ||
+    combined.includes('insufficient quota') ||
+    combined.includes('insufficient balance') ||
+    combined.includes('out of credits') ||
+    combined.includes('quota exceeded')
+  ) {
+    return new AiError(
+      `${provider} account has insufficient credits or quota.${said}`,
+      'Check your account balance or billing settings with the provider.',
+    )
+  }
+
+  // 3. Model not found
+  if (
+    status === 404 ||
+    combined.includes('model_not_found') ||
+    combined.includes('model not found') ||
+    combined.includes('unknown model') ||
+    combined.includes('does not exist')
+  ) {
+    return new AiError(
+      `${provider} could not find that model.${said}`,
+      'Check the model name in AI settings — make sure the model exists on this provider.',
+    )
+  }
+
+  if (status === 401 || status === 403) {
+    return new AiError(
+      `${provider} rejected the API key.${said}`,
+      'Double-check the key in AI settings, or confirm the account has access.',
+    )
+  }
+
+  if (status === 429) {
+    return new AiError(
+      `${provider} rate limit reached.${said}`,
+      'Wait a moment and try again, or check your plan limits.',
+    )
+  }
+
+  return new AiError(`${provider} returned an error (${status}).${said}`, detail.trim() || undefined)
 }
 
 async function chat(settings: AiSettings, system: string, user: string, jsonMode: boolean): Promise<string> {
