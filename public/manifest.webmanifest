@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Canvasly — Personal Design Workspace",
+  "name": "Canvasly — Your Creative Life, In One Place",
   "short_name": "Canvasly",
-  "description": "An offline-first design workspace with bring-your-own-key AI wireframing, comments, and quick exports.",
+  "description": "A local-first personal creative workspace: Ideas, Design, Systems, Library, Journal and Archive — with bring-your-own-key AI across every space.",
   "lang": "en",
   "start_url": "/",
   "scope": "/",
