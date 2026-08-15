@@ -14,17 +14,30 @@ export type WorkspaceBackup = {
 }
 
 const DATABASE = 'canvasly-offline-workspace'
-const STORE = 'projects'
+const VERSION = 2
+
+/** Every object store in the personal workspace database. */
+export const STORES = {
+  projects: 'projects',
+  ideas: 'ideas',
+  journal: 'journal',
+  assets: 'assets',
+  snapshots: 'snapshots',
+} as const
+
+export type StoreName = (typeof STORES)[keyof typeof STORES]
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DATABASE, 1)
+    const request = indexedDB.open(DATABASE, VERSION)
     request.onerror = () => reject(request.error)
     request.onupgradeneeded = () => {
       const db = request.result
-      if (!db.objectStoreNames.contains(STORE)) {
-        const store = db.createObjectStore(STORE, { keyPath: 'id' })
-        store.createIndex('updatedAt', 'updatedAt')
+      for (const store of Object.values(STORES)) {
+        if (!db.objectStoreNames.contains(store)) {
+          const created = db.createObjectStore(store, { keyPath: 'id' })
+          created.createIndex('updatedAt', 'updatedAt')
+        }
       }
     }
     request.onsuccess = () => resolve(request.result)
@@ -38,9 +51,47 @@ function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   })
 }
 
-function newId() {
-  return globalThis.crypto?.randomUUID?.() ?? `project-${Date.now()}-${Math.random().toString(16).slice(2)}`
+export function newId() {
+  return globalThis.crypto?.randomUUID?.() ?? `record-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
+
+/* ------------------------------------------------------------------ */
+/* Generic record helpers shared by every workspace space              */
+/* ------------------------------------------------------------------ */
+
+export async function storeGetAll<T>(store: StoreName): Promise<T[]> {
+  const db = await openDatabase()
+  try {
+    const transaction = db.transaction(store, 'readonly')
+    return await requestResult(transaction.objectStore(store).getAll() as IDBRequest<T[]>)
+  } finally {
+    db.close()
+  }
+}
+
+export async function storePut<T>(store: StoreName, value: T): Promise<void> {
+  const db = await openDatabase()
+  try {
+    const transaction = db.transaction(store, 'readwrite')
+    await requestResult(transaction.objectStore(store).put(value))
+  } finally {
+    db.close()
+  }
+}
+
+export async function storeDelete(store: StoreName, id: string): Promise<void> {
+  const db = await openDatabase()
+  try {
+    const transaction = db.transaction(store, 'readwrite')
+    await requestResult(transaction.objectStore(store).delete(id))
+  } finally {
+    db.close()
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Projects                                                            */
+/* ------------------------------------------------------------------ */
 
 export function makeProject(name: string, nodes: unknown[] = []): LocalProject {
   const now = Date.now()
@@ -54,34 +105,16 @@ export function makeProject(name: string, nodes: unknown[] = []): LocalProject {
 }
 
 export async function getProjects(): Promise<LocalProject[]> {
-  const db = await openDatabase()
-  try {
-    const transaction = db.transaction(STORE, 'readonly')
-    const projects = await requestResult(transaction.objectStore(STORE).getAll())
-    return projects.sort((a, b) => b.updatedAt - a.updatedAt)
-  } finally {
-    db.close()
-  }
+  const projects = await storeGetAll<LocalProject>(STORES.projects)
+  return projects.sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
 export async function putProject(project: LocalProject): Promise<void> {
-  const db = await openDatabase()
-  try {
-    const transaction = db.transaction(STORE, 'readwrite')
-    await requestResult(transaction.objectStore(STORE).put(project))
-  } finally {
-    db.close()
-  }
+  await storePut(STORES.projects, project)
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
-  const db = await openDatabase()
-  try {
-    const transaction = db.transaction(STORE, 'readwrite')
-    await requestResult(transaction.objectStore(STORE).delete(projectId))
-  } finally {
-    db.close()
-  }
+  await storeDelete(STORES.projects, projectId)
 }
 
 export async function makeBackup(): Promise<WorkspaceBackup> {

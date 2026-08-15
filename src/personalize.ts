@@ -1,6 +1,12 @@
 /* Personalization: AI skills and the user's profile.
  * Both live in localStorage, so they persist across sessions on this device. */
 
+/** A reference file bundled with an imported skill (from a zip). */
+export type SkillResource = {
+  path: string
+  text: string
+}
+
 export type AiSkill = {
   id: string
   name: string
@@ -8,6 +14,9 @@ export type AiSkill = {
   instructions: string
   enabled: boolean
   builtin?: boolean
+  /** 'file' when imported from SKILL.md / README / zip, matching Claude Skills. */
+  source?: 'file'
+  resources?: SkillResource[]
 }
 
 export type Profile = {
@@ -80,11 +89,28 @@ export function saveSkills(skills: AiSkill[]) {
   window.localStorage.setItem(SKILLS_KEY, JSON.stringify(skills))
 }
 
-/** Combines every enabled skill into extra rules appended to AI system prompts. */
+/** Combines every enabled skill into extra rules appended to AI system prompts.
+ * Short skills stay as one-line rules; imported skill files keep their full
+ * markdown body, and any bundled reference files are attached after it. */
 export function composeSkillInstructions(skills: AiSkill[]): string {
   const active = skills.filter((skill) => skill.enabled && skill.instructions.trim())
   if (active.length === 0) return ''
-  return `Additional style rules from the user's active skills:\n${active.map((skill) => `- ${skill.name}: ${skill.instructions.trim()}`).join('\n')}`
+
+  const simple = active.filter((skill) => skill.source !== 'file')
+  const files = active.filter((skill) => skill.source === 'file')
+  const parts: string[] = []
+
+  if (simple.length) {
+    parts.push(`Additional style rules from the user's active skills:\n${simple.map((skill) => `- ${skill.name}: ${skill.instructions.trim()}`).join('\n')}`)
+  }
+  for (const skill of files) {
+    let block = `Active skill "${skill.name}" — follow these instructions:\n${skill.instructions.trim()}`
+    for (const resource of skill.resources ?? []) {
+      block += `\n\nReference file from this skill (${resource.path}):\n${resource.text}`
+    }
+    parts.push(block)
+  }
+  return parts.join('\n\n')
 }
 
 export function loadProfile(): Profile {

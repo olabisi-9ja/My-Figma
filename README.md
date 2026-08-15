@@ -1,35 +1,42 @@
-# Canvasly — offline personal design workspace
+# Canvasly
 
-Canvasly is a browser-based, **offline-first** design workspace for personal use. It is packaged as an installable Progressive Web App (PWA), so one codebase can be used as an application on a laptop, Android phone/tablet, or iPhone/iPad.
+### Your creative life, in one place.
 
-Your projects are stored on the device in **IndexedDB**. No account, server, or internet connection is required for daily editing after the app has been opened once online.
+Canvasly is **not a smaller Figma**. Figma is becoming a team platform; Canvasly deliberately goes the other direction:
 
-## What works now
+> **Everything one independent creator needs to think, design, build, publish and archive — in one personal workspace.**
 
-- Installable PWA app shell with an offline fallback
-- Offline canvas editing, pan/zoom, selection, move, duplicate, delete, undo, and redo
-- Rectangle, ellipse, text, frame-placeholder, and pen-placeholder creation tools
-- Touch-friendly drawer panels for layers and properties on tablets and phones
-- Local project library: create, rename, open, and delete projects
-- IndexedDB autosave for larger, durable local project data
-- Editable design properties, comments UI, component starters, and handoff panel
-- **Canvasly AI (bring your own key)**: prompt-to-wireframe, plain-language design review, and copy improvement
-- **AI skills**: toggleable style rules (plain voice, minimal wireframes, mobile-first, accessibility focus) plus your own custom rules, applied to every AI request and saved permanently
-- **Your profile**: a name and color that personalize comments and the workspace, saved on the device
-- **Guided tour** on first launch, replayable anytime, plus a Tips & help panel
-- Export the current design as SVG, **PNG (2×)**, editable Design JSON, or **design tokens** (colors + text styles)
-- Export a complete offline backup of every local project
-- Import a Canvasly backup or exported Design JSON file
+It is a browser-based, **local-first** personal creative operating system, packaged as an installable Progressive Web App (PWA). One codebase runs as an app on a laptop, Android phone/tablet, or iPhone/iPad. Your work is stored on your device in **IndexedDB** — no account, no server, and no internet connection required for daily use after the first visit.
 
-> This remains an interface MVP: collaborative sync, real vector pen paths, image imports, version history, authentication, and a prototype player are future milestones.
+## The workspace
+
+Canvasly is organized around the creator's loop:
+
+```text
+Think → Design → Systemize → Reuse → Document → Archive → (back to Think)
+```
+
+The global navigation reflects that loop, and the canvas editor stays a focused production environment inside it:
+
+| Space | What it's for |
+| --- | --- |
+| ⌂ **Home** | Your creative dashboard: recent designs, latest ideas, journal entries, snapshots, and your DNA at a glance |
+| 💡 **Ideas** | A lightweight visual thinking space — notes, inspiration, references and prompts. One click turns any idea into an editable design |
+| 🎨 **Design** | The full canvas editor: pan/zoom, layers, tools, comments, inspector, exports, and Canvasly AI |
+| 🧩 **Systems** | Your personal design system: brand colors, type, an 8px-style spacing scale, radius tokens, brand voice — and **Canvasly DNA** |
+| 📚 **Library** | Your asset universe: reusable colors, snippets, links and prompts, plus every local project |
+| 📓 **Journal** | The creative process, not just the output: decisions, direction changes, client notes and lessons — optionally linked to projects |
+| 🗄 **Archive** | Named snapshots instead of `final-final-v4-really-final.fig`. Save one from the editor, restore it anytime |
+
+## Canvasly DNA
+
+One place containing **Design DNA + Brand DNA + Code DNA + AI DNA** — your preferred type, spacing system, corner radii, style, colors, voice, stack, and standing instructions. Every AI action automatically respects it, together with your toggleable **AI Skills**. Stored only on this device.
 
 ## Canvasly AI — bring your own key (BYOK)
 
-Canvasly has **no server and no AI subscription**. You paste your own API key, and AI calls go straight from your browser to the provider you pick. The key is stored only in this browser (localStorage) and is never sent anywhere except the endpoint you configure.
+Canvasly has **no server and no AI subscription**. You paste your own API key, and AI calls go straight from your browser to the provider you pick. The key lives only in this browser's localStorage.
 
-### Set up in four steps
-
-1. Click the **AI** button (sparkles) in the top bar → **Set up AI**.
+1. In the editor, click the **AI** button (sparkles) → **Set up AI**.
 2. Pick a provider and paste a key:
 
    | Provider | Get a key | Default model |
@@ -40,31 +47,49 @@ Canvasly has **no server and no AI subscription**. You paste your own API key, a
    | OpenAI-compatible | e.g. openrouter.ai/keys, LM Studio, Ollama | any model that endpoint serves |
 
 3. Press **Test connection**, then **Save**.
-4. Use the three AI actions.
 
-For the *OpenAI-compatible* provider you also set a **base URL** (for example `https://openrouter.ai/api/v1`). Local servers must allow browser (CORS) requests.
+What the AI can do today: **wireframe from a prompt** (added as fully editable layers), **plain-language design review**, and **copy improvement** on any selected text layer — all shaped by your Skills and your DNA.
 
-### What the AI can do
+### Skill files (Claude-compatible)
 
-- **Wireframe from a prompt** — describe a screen in one sentence; Canvasly generates it and adds it below your design as fully editable layers. This keeps generated structure *alive and editable*, never disposable.
-- **Review this design** — a plain-language explanation of the current screen for non-designers, plus three concrete improvements.
-- **Improve selected copy** — select any text layer and get three rewritten versions; click one to apply it.
+Skills aren't just toggles — you can **import them as files**, the same format Claude Skills use:
 
-### AI skills — teach it how you work
+- A **`SKILL.md`** (or any markdown/README) with optional YAML frontmatter (`name:` / `description:`) — the body becomes the AI instructions.
+- A **`.zip` bundle** containing `SKILL.md` plus reference files (`.md`, `.txt`, `.json`, `.csv`, …) — extra files become reference material the AI reads alongside the instructions.
 
-Open **AI → Skills** (puzzle chip in the AI panel). Skills are short instruction sets appended to every AI request:
+Open **AI → Skills → Import skill (.md / .zip)**. Any imported skill can also be **exported back to a portable `SKILL.md`**, so your skills are files you own and can share — not settings locked in an app. A ready-made example lives in [`examples/skills/greene-studios-brand/`](examples/skills/greene-studios-brand/) (zip the folder and import it).
 
-- Built-ins: *Plain, friendly voice* (on by default), *Minimal wireframes*, *Mobile-first layouts*, *Accessibility focus*.
-- Create custom skills, e.g. “Always use dark buttons with white text and a playful but professional tone.”
-- Toggle, edit, or delete anytime. Skills are stored in this browser permanently.
+## Local-first is the brand promise
 
-### Privacy
+> **Your creative work belongs to you.**
 
-Designs never leave the device. When you use an AI action, only your prompt and a compact summary of the canvas are sent to the provider you configured — never to Canvasly itself.
+```text
+Local
+   ↓
+Optional Cloud Sync   (future)
+   ↓
+Optional Collaboration (future)
+```
 
-## Make it yours
+- All projects, ideas, journal entries, assets and snapshots live in IndexedDB on your device.
+- Your brand kit, DNA, skills and profile live in localStorage.
+- The PWA shell works fully offline after one online visit.
+- One-click **offline backup** exports every project to a single file you own; re-import it anywhere.
 
-Click your avatar in the top bar to set **your name and color**. Your name signs every comment you leave, and the avatar updates everywhere. The profile is stored on this device.
+## What works now (v0.4)
+
+- The **creative OS shell**: Home, Ideas, Systems, Library, Journal, Archive
+- Ideas → design in one click (capture → explore → create)
+- Brand kit with colors, type, spacing scale, radii and voice, exportable as tokens JSON
+- Canvasly DNA feeding every AI request
+- Journal entries linked to projects
+- Archive snapshots saved from the editor and restorable as new projects
+- The full editor: offline canvas editing, pan/zoom, selection, move, duplicate, delete, undo/redo, text editing, strokes, shadows, comments, handoff panel
+- Local project library with autosave, import/export, and offline backup
+- BYOK AI (wireframes, reviews, copy), AI Skills, profile personalization, guided tour
+- Exports: SVG, PNG (2×), Design JSON, design tokens, full backup
+
+> Still an MVP in places: real vector pen paths, image imports, frames/groups/multi-select, Auto Layout, components, live code preview and publishing are on the roadmap — see [ROADMAP.md](ROADMAP.md).
 
 ## Export formats
 
@@ -73,87 +98,21 @@ Click your avatar in the top bar to set **your name and color**. Your name signs
 | SVG | Vector artwork — imports cleanly into Figma and Sketch |
 | PNG | 2× raster image for sharing and decks |
 | Design JSON | Full editable document data (Canvasly re-imports it) |
-| Design tokens | Colors and text styles extracted from the design |
+| Design tokens | Colors and text styles extracted from the design; the brand kit exports richer tokens |
 | Offline backup | Every local project in one file |
+| Snapshot to Archive | A named version of the current design, kept inside Canvasly |
 
-> **About `.fig` and `.sketch`:** these are proprietary formats that only Figma and Sketch themselves can write, so Canvasly (and any third-party tool) cannot produce them. The practical path is **Export → SVG**, then import that SVG into Figma or Sketch.
+> **About `.fig` and `.sketch`:** these are proprietary formats only Figma and Sketch themselves can write. The practical path is **Export → SVG**, then import that SVG.
 
-## What is saved permanently?
-
-Projects live in IndexedDB; your profile, AI key, and skills live in localStorage. All of it survives restarts and works offline. Browser storage belongs to one browser profile on one device — use **Export → Offline backup** before clearing site data or moving devices.
-
-## Learning the app: tour & tips
-
-- **First launch**: a guided tour with spotlight highlights walks through projects, tools, canvas, layers, inspector, comments, AI, and export (~90 seconds).
-- **Replay anytime**: open the 💡 **Tips & help** button in the top bar → **Replay guided tour**.
-- The same panel lists quick-start tips, every keyboard shortcut, and the AI setup steps.
-- The tour progress is remembered per browser; use ⌘/Ctrl+Z to undo anything while experimenting.
-
-## Run locally
+## Development
 
 ```bash
 npm install
-npm run dev
+npm run dev      # local dev server
+npm run build    # type-check + production build
+npm run deploy   # build + wrangler deploy
 ```
 
-Open the address printed by Vite, usually `http://localhost:5173`.
+## Privacy
 
-For a production build:
-
-```bash
-npm run build
-npm run preview
-```
-
-## Deploy to Cloudflare Workers
-
-This repo includes a `wrangler.jsonc` that deploys the `dist/` build as static assets on a Cloudflare Worker (`my-figma`), with single-page-app fallback for unmatched routes. No Worker script is needed — it is a pure static deployment.
-
-```bash
-npm run deploy        # builds, then runs `wrangler deploy`
-```
-
-Requires `CLOUDFLARE_API_TOKEN` (and optionally `CLOUDFLARE_ACCOUNT_ID`) in the environment, or `wrangler login` locally.
-
-## Install it as an app
-
-A PWA must be served over **HTTPS** in regular use (localhost is allowed for development). Deploy the `dist/` folder from `npm run build` to Cloudflare Pages, Netlify, Vercel, or any HTTPS static host.
-
-After opening the deployed app once online:
-
-| Device | Install action |
-| --- | --- |
-| Chrome / Edge on laptop | Use the install icon in the address bar, or the in-app **Install** button when shown. |
-| Android phone or tablet | Chrome menu → **Install app** or **Add to Home screen**. |
-| iPhone / iPad | Open in Safari → **Share** → **Add to Home Screen**. |
-| macOS Safari | Open the Share menu → **Add to Dock**. |
-
-The installed app opens in its own window/full-screen mode and keeps the app code cached for offline use. All local projects remain available while offline.
-
-## Offline data and backups
-
-- Canvasly autosaves project changes to the device’s IndexedDB store after a short pause.
-- Use **Export → Offline backup** periodically to download every local project in one JSON file.
-- Use the project menu beside the Canvasly icon to import a backup or a single exported Design JSON document.
-- Browser storage belongs to that browser and device. An exported backup is important before clearing browser data, changing devices, or using private/incognito mode.
-
-## Useful keyboard shortcuts
-
-| Action | Shortcut |
-| --- | --- |
-| Move/select | `V` |
-| Rectangle | `R` |
-| Ellipse | `O` |
-| Text | `T` |
-| Hand/pan | `H` |
-| Duplicate selected layer | `Cmd/Ctrl + D` |
-| Undo / redo | `Cmd/Ctrl + Z` / `Cmd/Ctrl + Shift + Z` |
-| Save local draft | `Cmd/Ctrl + S` |
-| Delete selected layer | `Backspace` or `Delete` |
-
-## Recommended next phases
-
-1. Add real image/SVG import and an actual pen/vector path model.
-2. Add document snapshots/version history locally.
-3. Wrap this PWA with Capacitor if you later need App Store/Play Store packages and deeper device integration.
-4. Add an authenticated cloud sync service, then WebSocket operations, presence, comments, and collaboration for SaaS use.
+Designs never leave the device. When you use an AI action, only your prompt, a compact canvas summary, your active Skills and your DNA are sent to the provider **you** configured — never to Canvasly itself, because there is no Canvasly server.
